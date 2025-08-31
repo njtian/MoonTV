@@ -203,6 +203,17 @@ function PlayPageClient() {
   const handlePreviousEpisodeRef = useRef<() => void>();
   const handleNextEpisodeRef = useRef<() => void>();
 
+  // 缓存上一次发送的远程状态，用于检测变化
+  const lastRemoteStatusRef = useRef<{
+    duration: number;
+    currentTime: number;
+    paused: boolean;
+    title: string;
+    episodeIndex: number;
+    totalEpisodes: number;
+    cover: string;
+  } | null>(null);
+
   // -----------------------------------------------------------------------------
   // 工具函数（Utils）
   // -----------------------------------------------------------------------------
@@ -960,6 +971,15 @@ function PlayPageClient() {
           }
           return;
         }
+        if (type === 'source') {
+          const action = payload.action;
+          console.log('收到换源控制消息:', { type, action, source: payload.source, id: payload.id });
+          if (action === 'change' && payload.source && payload.id) {
+            console.log('执行换源:', payload.source, payload.id);
+            handleSourceChange(payload.source, payload.id, payload.title || '');
+          }
+          return;
+        }
         if (type === 'focus') {
           const key = payload.key;
           if (key === 'left') handleKeyboardShortcuts(new KeyboardEvent('keydown', { key: 'ArrowLeft' }));
@@ -1013,33 +1033,57 @@ function PlayPageClient() {
           }
         }
         if (dur > 0 && sid && token) {
-          await fetch('/api/remote/status', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({
-              sid,
-              token,
-              message: {
-                type: 'status',
-                payload: {
-                  page: 'play' as const,
-                  pageTitle: '播放页面',
-                  duration: dur,
-                  currentTime: ct,
-                  paused: !!artPlayerRef.current?.paused,
-                  title: videoTitleRef.current,
-                  episodeIndex: currentEpisodeIndexRef.current + 1,
-                  totalEpisodes: detailRef.current?.episodes?.length || 1,
-                  cover: processImageUrl(videoCoverRef.current || ''),
+          // 检测状态是否发生变化
+          const currentStatus = {
+            duration: dur,
+            currentTime: Math.round(ct), // 四舍五入到整数，避免微小变化
+            paused: !!artPlayerRef.current?.paused,
+            title: videoTitleRef.current,
+            episodeIndex: currentEpisodeIndexRef.current + 1,
+            totalEpisodes: detailRef.current?.episodes?.length || 1,
+            cover: processImageUrl(videoCoverRef.current || ''),
+          };
+
+          const lastStatus = lastRemoteStatusRef.current;
+          const hasChanged = !lastStatus || 
+            lastStatus.duration !== currentStatus.duration ||
+            lastStatus.currentTime !== currentStatus.currentTime ||
+            lastStatus.paused !== currentStatus.paused ||
+            lastStatus.title !== currentStatus.title ||
+            lastStatus.episodeIndex !== currentStatus.episodeIndex ||
+            lastStatus.totalEpisodes !== currentStatus.totalEpisodes ||
+            lastStatus.cover !== currentStatus.cover;
+
+          // 只有在状态发生变化时才发送
+          if (hasChanged) {
+            await fetch('/api/remote/status', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({
+                sid,
+                token,
+                message: {
+                  type: 'status',
+                  payload: {
+                    page: 'play' as const,
+                    pageTitle: '播放页面',
+                    ...currentStatus,
+                  },
                 },
-              },
-            }),
-          });
+              }),
+            });
+            
+            // 更新缓存的状态
+            lastRemoteStatusRef.current = currentStatus;
+          }
         }
       } catch {
         // ignore error
       }
-      timer = setTimeout(tick, 2000);
+      
+      // 根据播放状态调整检查频率：播放时2秒，暂停时5秒
+      const checkInterval = artPlayerRef.current?.paused ? 5000 : 2000;
+      timer = setTimeout(tick, checkInterval);
     };
     tick();
     return () => timer && clearTimeout(timer);

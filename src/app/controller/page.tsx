@@ -2,6 +2,8 @@
 
 import React from 'react';
 
+import EpisodeSelector from '@/components/EpisodeSelector';
+
 function jsonFetch(url: string, body: unknown) {
   return fetch(url, {
     method: 'POST',
@@ -32,10 +34,17 @@ export default function ControllerPage({
     episodeIndex?: number;
     totalEpisodes?: number;
     cover?: string;
+    currentSource?: string;
+    currentId?: string;
   }>({});
   
   // Episode selector state
   const [showEpisodeSelector, setShowEpisodeSelector] = React.useState(false);
+  
+  // Source switching state for EpisodeSelector
+  const [availableSources, setAvailableSources] = React.useState<any[]>([]);
+  const [sourceSearchLoading, setSourceSearchLoading] = React.useState(false);
+  const [sourceSearchError, setSourceSearchError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     let mounted = true;
@@ -201,6 +210,63 @@ export default function ControllerPage({
       return '已连接';
     }
     return status;
+  };
+
+  // 获取播放源列表的函数
+  const fetchAvailableSources = async (title: string, year?: string) => {
+    if (!title) return;
+    
+    setSourceSearchLoading(true);
+    setSourceSearchError(null);
+    
+    try {
+      const response = await fetch(`/api/search?q=${encodeURIComponent(title.trim())}`);
+      if (!response.ok) {
+        throw new Error('搜索失败');
+      }
+      
+      const data = await response.json();
+      
+      // 应用与播放器相同的过滤逻辑
+      const results = data.results.filter((result: any) => {
+        // 标题匹配（忽略空格，不区分大小写）
+        const titleMatch = result.title.replaceAll(' ', '').toLowerCase() === 
+          title.replaceAll(' ', '').toLowerCase();
+        
+        // 年份匹配（如果指定了年份）
+        const yearMatch = year ? result.year.toLowerCase() === year.toLowerCase() : true;
+        
+        // 类型匹配（根据集数判断：多集为电视剧，单集为电影）
+        const typeMatch = result.episodes && result.episodes.length > 0;
+        
+        return titleMatch && yearMatch && typeMatch;
+      });
+      
+      setAvailableSources(results);
+    } catch (err) {
+      setSourceSearchError(err instanceof Error ? err.message : '搜索失败');
+      setAvailableSources([]);
+    } finally {
+      setSourceSearchLoading(false);
+    }
+  };
+
+  // 处理换源
+  const handleSourceChange = (source: string, id: string, title: string) => {
+    try {
+      // 发送换源命令
+      send({ 
+        type: 'source', 
+        payload: { 
+          action: 'change', 
+          source, 
+          id 
+        } 
+      });
+      setShowEpisodeSelector(false);
+    } catch (error) {
+      console.warn('发送换源命令失败:', error);
+    }
   };
 
   return (
@@ -423,6 +489,21 @@ export default function ControllerPage({
             </>
           )}
           
+          {/* Source switching control - always show on play page */}
+          <div className='flex justify-center'>
+            <button
+              className='h-11 px-6 rounded-lg bg-green-500 text-white font-medium hover:bg-green-600 transition-colors'
+              onClick={() => {
+                if (meta.title) {
+                  fetchAvailableSources(meta.title);
+                  setShowEpisodeSelector(true);
+                }
+              }}
+            >
+              换源
+            </button>
+          </div>
+          
           {/* Main playback controls */}
           <div className='grid grid-cols-2 gap-3'>
             <button
@@ -490,11 +571,13 @@ export default function ControllerPage({
       )}
       
       {/* Episode Selector Modal */}
-      {showEpisodeSelector && meta.totalEpisodes && meta.totalEpisodes > 1 && (
+      {showEpisodeSelector && (
         <div className='fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50' onClick={() => setShowEpisodeSelector(false)}>
-          <div className='bg-white dark:bg-gray-800 rounded-lg p-6 w-80 max-h-96 overflow-hidden' onClick={e => e.stopPropagation()}>
+          <div className='bg-white dark:bg-gray-800 rounded-lg p-6 w-[90vw] max-w-4xl max-h-[90vh] overflow-hidden' onClick={e => e.stopPropagation()}>
             <div className='flex justify-between items-center mb-4'>
-              <h3 className='text-lg font-semibold'>选择集数</h3>
+              <h3 className='text-lg font-semibold'>
+                {availableSources.length > 0 ? '选择播放源' : '选择集数'}
+              </h3>
               <button
                 onClick={() => setShowEpisodeSelector(false)}
                 className='text-gray-500 hover:text-gray-700 text-2xl'
@@ -503,31 +586,28 @@ export default function ControllerPage({
               </button>
             </div>
             
-            {/* Episode grid */}
-            <div className='grid grid-cols-4 gap-2 max-h-64 overflow-y-auto'>
-              {Array.from({ length: meta.totalEpisodes }, (_, i) => i + 1).map((episodeNum) => (
-                <button
-                  key={episodeNum}
-                  className={`h-12 rounded-lg text-sm font-medium transition-colors ${
-                    episodeNum === meta.episodeIndex
-                      ? 'bg-blue-500 text-white'
-                      : 'bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 hover:bg-blue-100 dark:hover:bg-blue-700'
-                  }`}
-                  onClick={() => {
-                    try {
-                      // Convert to 0-based index for the remote call
-                      const episode = episodeNum - 1;
-                      send({ type: 'episode', payload: { action: 'select', episode } });
-                      setShowEpisodeSelector(false);
-                    } catch (error) {
-                      console.warn('发送选集命令失败:', error);
-                    }
-                  }}
-                >
-                  {episodeNum}
-                </button>
-              ))}
-            </div>
+            {/* Use EpisodeSelector component for both episode selection and source switching */}
+            <EpisodeSelector
+              totalEpisodes={meta.totalEpisodes || 1}
+              value={meta.episodeIndex || 1}
+              onChange={(episodeNumber) => {
+                try {
+                  // Convert to 0-based index for the remote call
+                  const episode = episodeNumber - 1;
+                  send({ type: 'episode', payload: { action: 'select', episode } });
+                  setShowEpisodeSelector(false);
+                } catch (error) {
+                  console.warn('发送选集命令失败:', error);
+                }
+              }}
+              onSourceChange={handleSourceChange}
+              currentSource={meta.currentSource}
+              currentId={meta.currentId}
+              videoTitle={meta.title}
+              availableSources={availableSources}
+              sourceSearchLoading={sourceSearchLoading}
+              sourceSearchError={sourceSearchError}
+            />
           </div>
         </div>
       )}

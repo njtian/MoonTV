@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
 import { usePathname } from 'next/navigation';
+import { useEffect, useRef } from 'react';
 
 type PageStatus = {
   type: 'status';
@@ -22,6 +22,12 @@ type PageStatus = {
 export function useRemoteStatus() {
   const pathname = usePathname();
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // 缓存上一次发送的状态，用于检测变化
+  const lastStatusRef = useRef<{
+    page: PageStatus['payload']['page'];
+    pageTitle: string;
+  } | null>(null);
 
   useEffect(() => {
     // Clear any existing interval
@@ -72,22 +78,31 @@ export function useRemoteStatus() {
           return;
         }
 
-        // Send status update
-        await fetch('/api/remote/status', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            sid,
-            token,
-            message: {
-              type: 'status',
-              payload: {
-                page,
-                pageTitle,
-              },
-            } as PageStatus,
-          }),
-        });
+        // 检测状态是否发生变化
+        const currentStatus = { page, pageTitle };
+        const lastStatus = lastStatusRef.current;
+        const hasChanged = !lastStatus || 
+          lastStatus.page !== currentStatus.page ||
+          lastStatus.pageTitle !== currentStatus.pageTitle;
+
+        // 只有在状态发生变化时才发送
+        if (hasChanged) {
+          await fetch('/api/remote/status', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              sid,
+              token,
+              message: {
+                type: 'status',
+                payload: currentStatus,
+              } as PageStatus,
+            }),
+          });
+          
+          // 更新缓存的状态
+          lastStatusRef.current = currentStatus;
+        }
       } catch {
         // Ignore errors
       }
@@ -96,7 +111,7 @@ export function useRemoteStatus() {
     // Send initial status immediately
     sendStatus();
 
-    // Send status every 2 seconds
+    // Send status every 2 seconds (but only if changed)
     intervalRef.current = setInterval(sendStatus, 2000);
 
     return () => {

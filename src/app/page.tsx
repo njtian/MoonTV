@@ -30,6 +30,20 @@ function HomeClient() {
   const [hotVarietyShows, setHotVarietyShows] = useState<DoubanItem[]>([]);
   const [loading, setLoading] = useState(true);
   const { announcement } = useSite();
+  // 收藏数据需要在 useMemo 之前声明
+  // 收藏夹数据
+  type FavoriteItem = {
+    id: string;
+    source: string;
+    title: string;
+    poster: string;
+    episodes: number;
+    source_name: string;
+    currentEpisode?: number;
+    search_title?: string;
+  };
+  const [favoriteItems, setFavoriteItems] = useState<FavoriteItem[]>([]);
+
 
   const [showAnnouncement, setShowAnnouncement] = useState(false);
 
@@ -45,19 +59,7 @@ function HomeClient() {
     }
   }, [announcement]);
 
-  // 收藏夹数据
-  type FavoriteItem = {
-    id: string;
-    source: string;
-    title: string;
-    poster: string;
-    episodes: number;
-    source_name: string;
-    currentEpisode?: number;
-    search_title?: string;
-  };
-
-  const [favoriteItems, setFavoriteItems] = useState<FavoriteItem[]>([]);
+  // 收藏夹数据（其余逻辑保持不变）
 
   useEffect(() => {
     const fetchDoubanData = async () => {

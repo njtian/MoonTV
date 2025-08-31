@@ -6,7 +6,7 @@ import { db } from '@/lib/db';
 import { fetchVideoDetail } from '@/lib/fetchVideoDetail';
 import { SearchResult } from '@/lib/types';
 
-export const runtime = 'edge';
+// export const runtime = 'edge'; // 注释掉Edge Runtime，因为Redis客户端不兼容
 
 export async function GET(request: NextRequest) {
   console.log(request.url);

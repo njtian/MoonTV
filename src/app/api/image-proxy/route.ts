@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-export const runtime = 'edge';
+// export const runtime = 'edge'; // 注释掉Edge Runtime，因为可能需要访问数据库
 
 // OrionTV 兼容接口
 export async function GET(request: Request) {

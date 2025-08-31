@@ -1,11 +1,15 @@
 /* eslint-disable no-console */
-import { del, get, hset, publish } from '@/lib/remote/redis';
+import { hgetall, publish } from '@/lib/remote/redis';
 import { isAllowedOrigin, isRemoteEnabled } from '@/lib/remote/security';
 import { verifyPairingToken } from '@/lib/remote/token';
 
 export const runtime = 'nodejs';
 
-type Body = { sid?: string; token?: string; controllerId?: string };
+type Body = {
+  sid?: string;
+  token?: string;
+  message?: unknown;
+};
 
 function json(data: unknown, init?: number | ResponseInit) {
   const body = JSON.stringify(data);
@@ -35,39 +39,56 @@ export async function POST(request: Request) {
         { status: 403 }
       );
     }
-    const { sid, token, controllerId } = (await request.json()) as Body;
-    if (!sid || !token || !controllerId) {
+    const { sid, token, message } = (await request.json()) as Body;
+    if (!sid || !token || !message) {
       return json(
-        { code: 400, message: 'sid, token, controllerId required' },
+        { code: 400, message: 'sid, token, message required' },
         { status: 400 }
       );
     }
+
+    // Verify token belongs to sid
     const payload = await verifyPairingToken(token);
     if (!payload || payload.sid !== sid) {
       return json({ code: 401, message: 'invalid token' }, { status: 401 });
     }
 
-    const current = await get(`lock:${sid}`);
-    if (current !== controllerId) {
-      return json({ code: 409, message: 'not lock owner' }, { status: 409 });
+    // Only owner may publish status
+    const s = await hgetall(`s:${sid}`);
+    const owner = s?.ownerUserId;
+    const username = getUsernameFromCookie(request);
+    if (!owner || !username || owner !== username) {
+      return json({ code: 403, message: 'owner required' }, { status: 403 });
     }
 
-    await del(`lock:${sid}`);
-    await hset(`s:${sid}`, { controllerId: '' });
-    await publish(
-      `ch:${sid}`,
-      JSON.stringify({
-        type: 'system',
-        payload: { action: 'end' },
-        ts: Date.now(),
-      })
-    );
+    await publish(`ch:${sid}`, JSON.stringify({ ts: Date.now(), message }));
     return json({ code: 0, message: 'ok' });
   } catch (err) {
-    console.error('Unbind error', err);
-    return json(
-      { code: 500, message: 'Internal Server Error' },
-      { status: 500 }
-    );
+    console.error('Status publish error', err);
+    return json({ code: 500, message: 'Internal Server Error' }, { status: 500 });
+  }
+}
+
+function getUsernameFromCookie(request: Request): string | null {
+  const cookieHeader = request.headers.get('cookie');
+  if (!cookieHeader) return null;
+  const cookies = Object.fromEntries(
+    cookieHeader.split(';').map((c) => {
+      const i = c.indexOf('=');
+      if (i === -1) return [c.trim(), ''];
+      const k = c.slice(0, i).trim();
+      const v = c.slice(i + 1).trim();
+      return [k, v];
+    })
+  );
+  const authCookie = cookies['auth'];
+  if (!authCookie) return null;
+  try {
+    let decoded = decodeURIComponent(authCookie);
+    if (decoded.includes('%')) decoded = decodeURIComponent(decoded);
+    const data = JSON.parse(decoded);
+    return typeof data.username === 'string' ? data.username : null;
+  } catch {
+    return null;
   }
 }

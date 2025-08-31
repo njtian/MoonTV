@@ -13,6 +13,7 @@ export default function RemoteControlProvider() {
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [session, setSession] = React.useState<SessionInfo | null>(null);
+  const sseRef = React.useRef<EventSource | null>(null);
 
   React.useEffect(() => {
     // try resume from sessionStorage
@@ -57,6 +58,33 @@ export default function RemoteControlProvider() {
       // ignore copy error
     }
   };
+
+  // Subscribe SSE on session ready and dispatch to window (kept for screen-side consumers)
+  React.useEffect(() => {
+    if (!session?.sid) return;
+    try {
+      sseRef.current?.close();
+      const es = new EventSource(`/api/remote/stream?sid=${encodeURIComponent(session.sid)}`);
+      sseRef.current = es;
+      es.onmessage = (ev) => {
+        try {
+          const data = JSON.parse(ev.data);
+          // Relay event to app for handlers (e.g., player page)
+          window.dispatchEvent(
+            new CustomEvent('remote:message', { detail: data })
+          );
+        } catch {
+          // ignore
+        }
+      };
+    } catch {
+      // ignore
+    }
+    return () => {
+      sseRef.current?.close();
+      sseRef.current = null;
+    };
+  }, [session?.sid]);
 
   return (
     <>

@@ -92,6 +92,10 @@ function PlayPageClient() {
   const [videoTitle, setVideoTitle] = useState(searchParams.get('title') || '');
   const [videoYear, setVideoYear] = useState(searchParams.get('year') || '');
   const [videoCover, setVideoCover] = useState('');
+  const videoCoverRef = useRef('');
+  useEffect(() => {
+    videoCoverRef.current = videoCover;
+  }, [videoCover]);
   // 当前源和ID
   const [currentSource, setCurrentSource] = useState(
     searchParams.get('source') || ''
@@ -881,9 +885,110 @@ function PlayPageClient() {
 
   useEffect(() => {
     document.addEventListener('keydown', handleKeyboardShortcuts);
+    // Remote control event listener
+    const onRemote = (e: Event) => {
+      try {
+        const detail = (e as CustomEvent).detail;
+        const msg = detail?.message || detail; // publish 包裹了 {message}
+        if (!msg || !artPlayerRef.current) return;
+        const type = msg.type;
+        const payload = msg.payload || {};
+        if (type === 'playback') {
+          const action = payload.action;
+          if (action === 'play') artPlayerRef.current.play();
+          if (action === 'pause') artPlayerRef.current.pause();
+          if (action === 'seek') {
+            const value = Number(payload.value) || 0;
+            const t = (artPlayerRef.current.currentTime || 0) + value;
+            artPlayerRef.current.currentTime = Math.max(0, t);
+          }
+          if (action === 'seekTo') {
+            const seconds = Number(payload.value);
+            const dur = Number(artPlayerRef.current.duration) || 0;
+            if (!Number.isNaN(seconds) && seconds >= 0 && dur > 0) {
+              artPlayerRef.current.currentTime = Math.min(dur - 0.5, seconds);
+            }
+          }
+          return;
+        }
+        if (type === 'volume') {
+          if (typeof payload.level === 'number') {
+            artPlayerRef.current.volume = Math.min(1, Math.max(0, payload.level));
+          }
+          if (typeof payload.muted === 'boolean') {
+            artPlayerRef.current.muted = payload.muted;
+          }
+          return;
+        }
+        if (type === 'focus') {
+          const key = payload.key;
+          if (key === 'left') handleKeyboardShortcuts(new KeyboardEvent('keydown', { key: 'ArrowLeft' }));
+          if (key === 'right') handleKeyboardShortcuts(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
+          if (key === 'up') handleKeyboardShortcuts(new KeyboardEvent('keydown', { key: 'ArrowUp' }));
+          if (key === 'down') handleKeyboardShortcuts(new KeyboardEvent('keydown', { key: 'ArrowDown' }));
+          if (key === 'enter') artPlayerRef.current.toggle();
+          if (key === 'back') window.history.back();
+          return;
+        }
+      } catch {
+        // ignore
+      }
+    };
+    window.addEventListener('remote:message', onRemote as EventListener);
     return () => {
       document.removeEventListener('keydown', handleKeyboardShortcuts);
+      window.removeEventListener('remote:message', onRemote as EventListener);
     };
+  }, []);
+
+  // 定期广播当前播放进度给控制端（仅在远控启用时）
+  useEffect(() => {
+    let timer: any;
+    const tick = async () => {
+      try {
+        const dur = Number(artPlayerRef.current?.duration) || 0;
+        const ct = Number(artPlayerRef.current?.currentTime) || 0;
+        // 读取最新会话（创建会话后也能生效）
+        const sidRaw =
+          typeof window !== 'undefined'
+            ? window.sessionStorage.getItem('rc_session')
+            : null;
+        let sid = '';
+        let token = '';
+        if (sidRaw) {
+          try {
+            const s = JSON.parse(sidRaw);
+            sid = s.sid || '';
+            token = s.token || '';
+          } catch {}
+        }
+        if (dur > 0 && sid && token) {
+          await fetch('/api/remote/status', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              sid,
+              token,
+              message: {
+                type: 'status',
+                payload: {
+                  duration: dur,
+                  currentTime: ct,
+                  paused: !!artPlayerRef.current?.paused,
+                  title: videoTitleRef.current,
+                  episodeIndex: currentEpisodeIndexRef.current + 1,
+                  totalEpisodes: detailRef.current?.episodes?.length || 1,
+                  cover: processImageUrl(videoCoverRef.current || ''),
+                },
+              },
+            }),
+          });
+        }
+      } catch {}
+      timer = setTimeout(tick, 2000);
+    };
+    tick();
+    return () => timer && clearTimeout(timer);
   }, []);
 
   // ---------------------------------------------------------------------------
@@ -927,12 +1032,12 @@ function PlayPageClient() {
   // ---------------------------------------------------------------------------
   // 处理全局快捷键
   const handleKeyboardShortcuts = (e: KeyboardEvent) => {
-    // 忽略输入框中的按键事件
-    if (
-      (e.target as HTMLElement).tagName === 'INPUT' ||
-      (e.target as HTMLElement).tagName === 'TEXTAREA'
-    )
-      return;
+    // 忽略输入框中的按键事件（兼容合成事件无 target 的情况）
+    const target = (e.target as HTMLElement | null) || null;
+    if (target) {
+      const tag = target.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+    }
 
     // Alt + 左箭头 = 上一集
     if (e.altKey && e.key === 'ArrowLeft') {

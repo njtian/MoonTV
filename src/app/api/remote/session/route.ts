@@ -23,7 +23,24 @@ export async function POST(request: Request) {
       );
     }
     if (!isAllowedOrigin(request)) {
-      return json({ code: 403, message: 'forbidden origin' }, { status: 403 });
+      // Debug details to help diagnose local dev issues
+      const originHeader = request.headers.get('origin') || '';
+      const reqUrl = new URL(request.url);
+      const checkMode = (process.env.REMOTE_ORIGIN_CHECK || 'loopback').toLowerCase();
+      const nodeEnv = process.env.NODE_ENV || 'development';
+      return json(
+        {
+          code: 403,
+          message: 'forbidden origin',
+          data: {
+            origin: originHeader,
+            urlOrigin: reqUrl.origin,
+            checkMode,
+            nodeEnv,
+          },
+        },
+        { status: 403 }
+      );
     }
 
     const username = getUsernameFromCookie(request);
@@ -46,7 +63,16 @@ export async function POST(request: Request) {
     });
 
     const u = new URL(request.url);
-    const controllerUrl = new URL('/controller', u.origin);
+    // Normalize 0.0.0.0 for dev; prefer forwarded host if present
+    const xfHost = request.headers.get('x-forwarded-host');
+    const xfProto = request.headers.get('x-forwarded-proto') || u.protocol.replace(':', '');
+    let origin = u.origin;
+    if (xfHost) {
+      origin = `${xfProto || 'http'}://${xfHost}`;
+    } else if (u.hostname === '0.0.0.0') {
+      origin = `${u.protocol}//localhost${u.port ? `:${u.port}` : ''}`;
+    }
+    const controllerUrl = new URL('/controller', origin);
     controllerUrl.searchParams.set('sid', sid);
     controllerUrl.searchParams.set('t', token);
 

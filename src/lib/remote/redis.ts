@@ -154,3 +154,63 @@ export async function get(key: string): Promise<string | null> {
     return res as string | null;
   }
 }
+
+/**
+ * Subscribe to a Pub/Sub channel and receive messages.
+ * Returns an unsubscribe function.
+ */
+export async function subscribeChannel(
+  channel: string,
+  onMessage: (message: string) => void
+): Promise<() => Promise<void>> {
+  const { kv, type } = getRedis();
+  const ch = getKey(channel);
+
+  if (type === 'upstash') {
+    // Upstash client supports subscribe in recent versions.
+    // Fallback: throw if not available to surface config issue.
+    if (typeof (kv as any).subscribe !== 'function') {
+      throw new Error('Upstash client does not support subscribe()');
+    }
+    const subscription = await (kv as any).subscribe({ channel: ch }, (data: any) => {
+      try {
+        const msg = typeof data === 'string' ? data : JSON.stringify(data);
+        onMessage(msg);
+      } catch {
+        // swallow
+      }
+    });
+    return async () => {
+      try {
+        await subscription?.unsubscribe?.();
+      } catch {
+        // ignore
+      }
+    };
+  }
+
+  // Node redis client: use a duplicated connection for pub/sub
+  await ensureConnected();
+  const base = kv as any;
+  const sub = base.duplicate();
+  await sub.connect();
+  await sub.subscribe(ch, (message: string) => {
+    try {
+      onMessage(message);
+    } catch {
+      // ignore consumer errors
+    }
+  });
+  return async () => {
+    try {
+      await sub.unsubscribe(ch);
+    } catch {
+      // ignore
+    }
+    try {
+      await sub.quit();
+    } catch {
+      // ignore
+    }
+  };
+}

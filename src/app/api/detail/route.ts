@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 import { getAvailableApiSites, getCacheTime } from '@/lib/config';
 import { getDetailFromApi } from '@/lib/downstream';
 
-export const runtime = 'edge';
+// export const runtime = 'edge'; // 注释掉Edge Runtime，因为getCacheTime()需要访问数据库
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);

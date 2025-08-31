@@ -22,7 +22,9 @@ export async function GET(request: Request) {
 
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
-        controller.enqueue(encoder.encode(sseEvent(JSON.stringify({ ready: true }))));
+        controller.enqueue(
+          encoder.encode(sseEvent(JSON.stringify({ ready: true })))
+        );
 
         try {
           const unsubscribe = await subscribeChannel(`ch:${sid}`, (msg) => {
@@ -42,7 +44,9 @@ export async function GET(request: Request) {
       },
       async cancel() {
         try {
-          const fn = (this as any)._unsubscribe as (() => Promise<void>) | undefined;
+          const fn = (this as any)._unsubscribe as
+            | (() => Promise<void>)
+            | undefined;
           if (fn) await fn();
         } catch {
           // ignore

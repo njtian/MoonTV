@@ -172,14 +172,17 @@ export async function subscribeChannel(
     if (typeof (kv as any).subscribe !== 'function') {
       throw new Error('Upstash client does not support subscribe()');
     }
-    const subscription = await (kv as any).subscribe({ channel: ch }, (data: any) => {
-      try {
-        const msg = typeof data === 'string' ? data : JSON.stringify(data);
-        onMessage(msg);
-      } catch {
-        // swallow
+    const subscription = await (kv as any).subscribe(
+      { channel: ch },
+      (data: any) => {
+        try {
+          const msg = typeof data === 'string' ? data : JSON.stringify(data);
+          onMessage(msg);
+        } catch {
+          // swallow
+        }
       }
-    });
+    );
     return async () => {
       try {
         await subscription?.unsubscribe?.();

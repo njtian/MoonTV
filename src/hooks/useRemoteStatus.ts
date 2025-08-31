@@ -22,7 +22,7 @@ type PageStatus = {
 export function useRemoteStatus() {
   const pathname = usePathname();
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
-  
+
   // 缓存上一次发送的状态，用于检测变化
   const lastStatusRef = useRef<{
     page: PageStatus['payload']['page'];
@@ -81,7 +81,8 @@ export function useRemoteStatus() {
         // 检测状态是否发生变化
         const currentStatus = { page, pageTitle };
         const lastStatus = lastStatusRef.current;
-        const hasChanged = !lastStatus || 
+        const hasChanged =
+          !lastStatus ||
           lastStatus.page !== currentStatus.page ||
           lastStatus.pageTitle !== currentStatus.pageTitle;
 
@@ -99,7 +100,7 @@ export function useRemoteStatus() {
               } as PageStatus,
             }),
           });
-          
+
           // 更新缓存的状态
           lastStatusRef.current = currentStatus;
         }

@@ -947,7 +947,10 @@ function PlayPageClient() {
         }
         if (type === 'volume') {
           if (typeof payload.level === 'number') {
-            artPlayerRef.current.volume = Math.min(1, Math.max(0, payload.level));
+            artPlayerRef.current.volume = Math.min(
+              1,
+              Math.max(0, payload.level)
+            );
           }
           if (typeof payload.muted === 'boolean') {
             artPlayerRef.current.muted = payload.muted;
@@ -956,7 +959,11 @@ function PlayPageClient() {
         }
         if (type === 'episode') {
           const action = payload.action;
-          console.log('收到剧集控制消息:', { type, action, episode: payload.episode });
+          console.log('收到剧集控制消息:', {
+            type,
+            action,
+            episode: payload.episode,
+          });
           if (action === 'previous') {
             console.log('执行上一集');
             handlePreviousEpisodeRef.current?.();
@@ -973,7 +980,12 @@ function PlayPageClient() {
         }
         if (type === 'source') {
           const action = payload.action;
-          console.log('收到换源控制消息:', { type, action, source: payload.source, id: payload.id });
+          console.log('收到换源控制消息:', {
+            type,
+            action,
+            source: payload.source,
+            id: payload.id,
+          });
           if (action === 'change' && payload.source && payload.id) {
             console.log('执行换源:', payload.source, payload.id);
             handleSourceChange(payload.source, payload.id, payload.title || '');
@@ -982,10 +994,22 @@ function PlayPageClient() {
         }
         if (type === 'focus') {
           const key = payload.key;
-          if (key === 'left') handleKeyboardShortcuts(new KeyboardEvent('keydown', { key: 'ArrowLeft' }));
-          if (key === 'right') handleKeyboardShortcuts(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
-          if (key === 'up') handleKeyboardShortcuts(new KeyboardEvent('keydown', { key: 'ArrowUp' }));
-          if (key === 'down') handleKeyboardShortcuts(new KeyboardEvent('keydown', { key: 'ArrowDown' }));
+          if (key === 'left')
+            handleKeyboardShortcuts(
+              new KeyboardEvent('keydown', { key: 'ArrowLeft' })
+            );
+          if (key === 'right')
+            handleKeyboardShortcuts(
+              new KeyboardEvent('keydown', { key: 'ArrowRight' })
+            );
+          if (key === 'up')
+            handleKeyboardShortcuts(
+              new KeyboardEvent('keydown', { key: 'ArrowUp' })
+            );
+          if (key === 'down')
+            handleKeyboardShortcuts(
+              new KeyboardEvent('keydown', { key: 'ArrowDown' })
+            );
           if (key === 'enter') artPlayerRef.current.toggle();
           if (key === 'back') window.history.back();
           return;
@@ -1045,7 +1069,8 @@ function PlayPageClient() {
           };
 
           const lastStatus = lastRemoteStatusRef.current;
-          const hasChanged = !lastStatus || 
+          const hasChanged =
+            !lastStatus ||
             lastStatus.duration !== currentStatus.duration ||
             lastStatus.currentTime !== currentStatus.currentTime ||
             lastStatus.paused !== currentStatus.paused ||
@@ -1072,7 +1097,7 @@ function PlayPageClient() {
                 },
               }),
             });
-            
+
             // 更新缓存的状态
             lastRemoteStatusRef.current = currentStatus;
           }
@@ -1080,7 +1105,7 @@ function PlayPageClient() {
       } catch {
         // ignore error
       }
-      
+
       // 根据播放状态调整检查频率：播放时2秒，暂停时5秒
       const checkInterval = artPlayerRef.current?.paused ? 5000 : 2000;
       timer = setTimeout(tick, checkInterval);
@@ -1094,7 +1119,11 @@ function PlayPageClient() {
   // ---------------------------------------------------------------------------
   // 处理集数切换
   const handleEpisodeChange = (episodeNumber: number) => {
-    console.log('handleEpisodeChange 被调用:', { episodeNumber, totalEpisodes, currentEpisodeIndex });
+    console.log('handleEpisodeChange 被调用:', {
+      episodeNumber,
+      totalEpisodes,
+      currentEpisodeIndex,
+    });
     if (episodeNumber >= 0 && episodeNumber < totalEpisodes) {
       console.log('切换到集数:', episodeNumber);
       // 在更换集数前保存当前播放进度

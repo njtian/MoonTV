@@ -1,6 +1,9 @@
 'use client';
 
+import Image from 'next/image';
 import React from 'react';
+
+import { SearchResult } from '@/lib/types';
 
 import EpisodeSelector from '@/components/EpisodeSelector';
 
@@ -37,14 +40,110 @@ export default function ControllerPage({
     currentSource?: string;
     currentId?: string;
   }>({});
-  
+
   // Episode selector state
   const [showEpisodeSelector, setShowEpisodeSelector] = React.useState(false);
-  
+
   // Source switching state for EpisodeSelector
-  const [availableSources, setAvailableSources] = React.useState<any[]>([]);
+  const [availableSources, setAvailableSources] = React.useState<
+    SearchResult[]
+  >([]);
   const [sourceSearchLoading, setSourceSearchLoading] = React.useState(false);
-  const [sourceSearchError, setSourceSearchError] = React.useState<string | null>(null);
+  const [sourceSearchError, setSourceSearchError] = React.useState<
+    string | null
+  >(null);
+
+  const [localSession, setLocalSession] = React.useState<{
+    sid: string;
+    token: string;
+    controllerId?: string;
+    lastActive: number;
+  } | null>(null);
+
+  // 初始化时尝试恢复本地会话
+  React.useEffect(() => {
+    const savedSession = localStorage.getItem('rc_controller_session');
+    if (savedSession) {
+      try {
+        const session = JSON.parse(savedSession);
+        const now = Date.now();
+        // 检查会话是否在24小时内有效
+        if (
+          session.lastActive &&
+          now - session.lastActive < 24 * 60 * 60 * 1000
+        ) {
+          setLocalSession(session);
+          // 如果有URL参数，优先使用URL参数
+          if (!sid && !token) {
+            // 使用本地会话重定向
+            const url = new URL(window.location.href);
+            url.searchParams.set('sid', session.sid);
+            url.searchParams.set('t', session.token);
+            window.history.replaceState({}, '', url.toString());
+            // 重新加载页面以使用新的URL参数
+            window.location.reload();
+          } else {
+            // 有URL参数时，检查会话状态
+            checkSessionStatus(session.sid, session.token);
+          }
+        } else {
+          // 会话过期，清除本地存储
+          localStorage.removeItem('rc_controller_session');
+        }
+      } catch (error) {
+        console.warn('解析本地会话失败:', error);
+        localStorage.removeItem('rc_controller_session');
+      }
+    }
+  }, [sid, token]);
+
+  // 检查会话状态
+  const checkSessionStatus = React.useCallback(
+    async (sessionSid: string, sessionToken: string) => {
+      try {
+        const res = await fetch(
+          `/api/remote/status?sid=${sessionSid}&t=${sessionToken}`
+        );
+        if (res.ok) {
+          const data = await res.json();
+          if (data.code === 0) {
+            console.log('会话状态检查成功:', data.data);
+            // 如果会话被锁定且不是当前控制器，尝试重新claim
+            if (
+              data.data.isLocked &&
+              data.data.lockOwner !== localSession?.controllerId
+            ) {
+              console.log('检测到会话被其他控制器占用，尝试重新claim');
+              setControllerId(null);
+              setStatus('idle');
+            }
+          }
+        }
+      } catch (error) {
+        console.warn('检查会话状态失败:', error);
+      }
+    },
+    [localSession?.controllerId]
+  );
+
+  // 保存会话到本地存储
+  const saveSessionToLocal = React.useCallback(
+    (sessionData: { sid: string; token: string; controllerId?: string }) => {
+      const session = {
+        ...sessionData,
+        lastActive: Date.now(),
+      };
+      setLocalSession(session);
+      localStorage.setItem('rc_controller_session', JSON.stringify(session));
+    },
+    []
+  );
+
+  // 清除本地会话
+  const clearLocalSession = React.useCallback(() => {
+    setLocalSession(null);
+    localStorage.removeItem('rc_controller_session');
+  }, []);
 
   React.useEffect(() => {
     let mounted = true;
@@ -57,35 +156,112 @@ export default function ControllerPage({
         if (!res.ok || data.code !== 0)
           throw new Error(data.message || 'claim failed');
         if (!mounted) return;
-        setControllerId(data.data.controllerId);
+
+        const newControllerId = data.data.controllerId;
+        setControllerId(newControllerId);
         setStatus('ready');
+
+        // 保存会话到本地存储
+        saveSessionToLocal({
+          sid,
+          token,
+          controllerId: newControllerId,
+        });
       } catch (e) {
+        console.error('Claim failed:', e);
         setStatus('error');
+        // 清除本地会话
+        clearLocalSession();
       }
     };
     claim();
     return () => {
       mounted = false;
     };
-  }, [sid, token]);
+  }, [sid, token, saveSessionToLocal, clearLocalSession]);
 
-  // Heartbeat
+  // Heartbeat - 优化心跳机制，减少间隔并添加错误处理
   React.useEffect(() => {
     if (!controllerId || !sid || !token) return;
-    const timer = setInterval(() => {
-      jsonFetch('/api/remote/claim', {
-        sid,
-        token,
-        controllerId,
-        heartbeat: true,
-      });
-    }, 15000);
+
+    let heartbeatCount = 0;
+    const maxFailures = 3;
+
+    const timer = setInterval(async () => {
+      try {
+        const res = await jsonFetch('/api/remote/claim', {
+          sid,
+          token,
+          controllerId,
+          heartbeat: true,
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          if (data.code === 0) {
+            heartbeatCount = 0; // 重置失败计数
+            // 更新本地会话的最后活跃时间
+            const currentSession = localStorage.getItem(
+              'rc_controller_session'
+            );
+            if (currentSession) {
+              try {
+                const session = JSON.parse(currentSession);
+                session.lastActive = Date.now();
+                localStorage.setItem(
+                  'rc_controller_session',
+                  JSON.stringify(session)
+                );
+              } catch (error) {
+                console.warn('更新本地会话时间失败:', error);
+              }
+            }
+          } else {
+            heartbeatCount++;
+            console.warn(
+              `心跳失败 ${heartbeatCount}/${maxFailures}:`,
+              data.message
+            );
+          }
+        } else {
+          heartbeatCount++;
+          console.warn(
+            `心跳HTTP错误 ${heartbeatCount}/${maxFailures}:`,
+            res.status
+          );
+        }
+
+        // 如果连续失败超过最大次数，尝试重新claim
+        if (heartbeatCount >= maxFailures) {
+          console.error('心跳连续失败，尝试重新claim');
+          clearInterval(timer);
+          setStatus('error');
+          // 触发重新claim
+          setControllerId(null);
+        }
+      } catch (error) {
+        heartbeatCount++;
+        console.error(`心跳异常 ${heartbeatCount}/${maxFailures}:`, error);
+
+        if (heartbeatCount >= maxFailures) {
+          console.error('心跳连续异常，尝试重新claim');
+          clearInterval(timer);
+          setStatus('error');
+          setControllerId(null);
+        }
+      }
+    }, 10000); // 减少心跳间隔到10秒
+
     return () => clearInterval(timer);
   }, [controllerId, sid, token]);
 
   const send = async (message: unknown) => {
     if (!sid || !token || !controllerId) {
-      console.warn('send 函数缺少必要参数:', { sid: !!sid, token: !!token, controllerId: !!controllerId });
+      console.warn('send 函数缺少必要参数:', {
+        sid: !!sid,
+        token: !!token,
+        controllerId: !!controllerId,
+      });
       return;
     }
     try {
@@ -106,24 +282,27 @@ export default function ControllerPage({
   const [currentTime, setCurrentTime] = React.useState<number | null>(null);
   const [isSeeking, setIsSeeking] = React.useState(false);
   const [seekSeconds, setSeekSeconds] = React.useState<number>(0);
-  const onSeekTo = async (p: number) => {
+  const _onSeekTo = async (p: number) => {
     const clamped = Math.min(100, Math.max(0, Math.round(p)));
     setPercent(clamped);
     if (duration && duration > 0) {
       const seconds = Math.round((clamped / 100) * duration);
-      await send({ type: 'playback', payload: { action: 'seekTo', value: seconds } });
+      await send({
+        type: 'playback',
+        payload: { action: 'seekTo', value: seconds },
+      });
     }
   };
 
   // Subscribe SSE directly to receive status and other messages
   React.useEffect(() => {
     if (!sid) return;
-    
+
     let es: EventSource | null = null;
-    
+
     try {
       es = new EventSource(`/api/remote/stream?sid=${encodeURIComponent(sid)}`);
-      
+
       const onMsg = (ev: MessageEvent) => {
         try {
           const data = JSON.parse(ev.data);
@@ -134,10 +313,10 @@ export default function ControllerPage({
             if (msg.payload?.page) {
               setPageStatus({
                 page: msg.payload.page,
-                pageTitle: msg.payload.pageTitle
+                pageTitle: msg.payload.pageTitle,
               });
             }
-            
+
             // Handle play page status
             const d = msg.payload?.duration;
             const ct = msg.payload?.currentTime;
@@ -160,18 +339,17 @@ export default function ControllerPage({
           console.warn('解析SSE消息失败:', parseError);
         }
       };
-      
+
       const onError = (error: Event) => {
         console.warn('SSE连接错误:', error);
       };
-      
+
       es.onmessage = onMsg;
       es.onerror = onError;
-      
     } catch (sseError) {
       console.warn('创建SSE连接失败:', sseError);
     }
-    
+
     return () => {
       if (es) {
         try {
@@ -215,33 +393,38 @@ export default function ControllerPage({
   // 获取播放源列表的函数
   const fetchAvailableSources = async (title: string, year?: string) => {
     if (!title) return;
-    
+
     setSourceSearchLoading(true);
     setSourceSearchError(null);
-    
+
     try {
-      const response = await fetch(`/api/search?q=${encodeURIComponent(title.trim())}`);
+      const response = await fetch(
+        `/api/search?q=${encodeURIComponent(title.trim())}`
+      );
       if (!response.ok) {
         throw new Error('搜索失败');
       }
-      
+
       const data = await response.json();
-      
+
       // 应用与播放器相同的过滤逻辑
-      const results = data.results.filter((result: any) => {
+      const results = data.results.filter((result: SearchResult) => {
         // 标题匹配（忽略空格，不区分大小写）
-        const titleMatch = result.title.replaceAll(' ', '').toLowerCase() === 
+        const titleMatch =
+          result.title.replaceAll(' ', '').toLowerCase() ===
           title.replaceAll(' ', '').toLowerCase();
-        
+
         // 年份匹配（如果指定了年份）
-        const yearMatch = year ? result.year.toLowerCase() === year.toLowerCase() : true;
-        
+        const yearMatch = year
+          ? result.year.toLowerCase() === year.toLowerCase()
+          : true;
+
         // 类型匹配（根据集数判断：多集为电视剧，单集为电影）
         const typeMatch = result.episodes && result.episodes.length > 0;
-        
+
         return titleMatch && yearMatch && typeMatch;
       });
-      
+
       setAvailableSources(results);
     } catch (err) {
       setSourceSearchError(err instanceof Error ? err.message : '搜索失败');
@@ -252,16 +435,16 @@ export default function ControllerPage({
   };
 
   // 处理换源
-  const handleSourceChange = (source: string, id: string, title: string) => {
+  const handleSourceChange = (source: string, id: string, _title: string) => {
     try {
       // 发送换源命令
-      send({ 
-        type: 'source', 
-        payload: { 
-          action: 'change', 
-          source, 
-          id 
-        } 
+      send({
+        type: 'source',
+        payload: {
+          action: 'change',
+          source,
+          id,
+        },
       });
       setShowEpisodeSelector(false);
     } catch (error) {
@@ -271,8 +454,28 @@ export default function ControllerPage({
 
   return (
     <div className='mx-auto max-w-md p-4 relative'>
-      <h1 className='mb-2 text-xl font-semibold'>MoonTV 遥控器</h1>
-      <p className='mb-4 text-sm opacity-70'>状态：{getStatusText()}</p>
+      <div className='flex items-center justify-between mb-4'>
+        <div>
+          <h1 className='text-xl font-semibold'>MoonTV 遥控器</h1>
+          <p className='text-sm opacity-70'>状态：{getStatusText()}</p>
+        </div>
+        {status === 'error' && (
+          <button
+            onClick={() => {
+              setStatus('idle');
+              setControllerId(null);
+            }}
+            className='px-3 py-1 text-sm bg-red-500 text-white rounded hover:bg-red-600 transition-colors'
+          >
+            重连
+          </button>
+        )}
+        {status === 'ready' && localSession && (
+          <div className='text-xs opacity-60'>
+            会话: {localSession.sid.slice(0, 8)}...
+          </div>
+        )}
+      </div>
 
       {/* Show poster and meta only on play page */}
       {pageStatus.page === 'play' && (
@@ -280,13 +483,22 @@ export default function ControllerPage({
           <div className='flex gap-3 items-center mb-4'>
             <div className='w-20 h-28 rounded overflow-hidden bg-gray-200 dark:bg-zinc-800 flex items-center justify-center'>
               {meta.cover ? (
-                <img src={meta.cover} alt='poster' className='w-full h-full object-cover' referrerPolicy='no-referrer' />
+                <Image
+                  src={meta.cover}
+                  alt='poster'
+                  width={80}
+                  height={112}
+                  className='w-full h-full object-cover'
+                  referrerPolicy='no-referrer'
+                />
               ) : (
                 <span className='text-xs opacity-60'>无封面</span>
               )}
             </div>
             <div className='flex-1 min-w-0'>
-              <div className='text-sm font-medium truncate'>{meta.title || '—'}</div>
+              <div className='text-sm font-medium truncate'>
+                {meta.title || '—'}
+              </div>
               <div className='text-xs opacity-70 mt-1'>
                 {meta.episodeIndex ? `第 ${meta.episodeIndex} 集` : ''}
                 {meta.totalEpisodes ? ` / 共 ${meta.totalEpisodes} 集` : ''}
@@ -320,7 +532,10 @@ export default function ControllerPage({
                 window.removeEventListener('mousemove', onMove);
                 window.removeEventListener('mouseup', onUp);
                 setIsSeeking(false);
-                await send({ type: 'playback', payload: { action: 'seekTo', value: latestSecs || 0 } });
+                await send({
+                  type: 'playback',
+                  payload: { action: 'seekTo', value: latestSecs || 0 },
+                });
               };
               window.addEventListener('mousemove', onMove);
               window.addEventListener('mouseup', onUp, { once: true });
@@ -348,7 +563,10 @@ export default function ControllerPage({
             }}
             onTouchEnd={async () => {
               setIsSeeking(false);
-              await send({ type: 'playback', payload: { action: 'seekTo', value: seekSeconds || 0 } });
+              await send({
+                type: 'playback',
+                payload: { action: 'seekTo', value: seekSeconds || 0 },
+              });
             }}
           >
             <div
@@ -362,16 +580,20 @@ export default function ControllerPage({
           </div>
           <div className='mt-1 text-[11px] opacity-70'>
             {duration != null && currentTime != null
-              ? `${formatTime(isSeeking ? seekSeconds : currentTime)} / ${formatTime(duration)}`
+              ? `${formatTime(
+                  isSeeking ? seekSeconds : currentTime
+                )} / ${formatTime(duration)}`
               : '—'}
           </div>
         </div>
       )}
-      
+
       {/* Show non-play page info */}
       {pageStatus.page && pageStatus.page !== 'play' && (
         <div className='mb-4 p-4 rounded-lg bg-gray-100 dark:bg-zinc-900'>
-          <p className='text-sm'>当前页面：{pageStatus.pageTitle || pageStatus.page}</p>
+          <p className='text-sm'>
+            当前页面：{pageStatus.pageTitle || pageStatus.page}
+          </p>
           <p className='text-xs opacity-70 mt-1'>导航控制可用</p>
         </div>
       )}
@@ -382,14 +604,28 @@ export default function ControllerPage({
           <button
             className='w-10 h-10 rounded-full bg-white/90 dark:bg-zinc-800/90 backdrop-blur-sm shadow-lg hover:bg-white dark:hover:bg-zinc-700 transition-all duration-200 hover:scale-110 active:scale-95 border border-gray-200 dark:border-zinc-700'
             onClick={() => {
-              if (confirm('确定要刷新播放器页面吗？\n\n这将重新加载整个播放器页面，可以解决播放卡顿、加载异常等问题。')) {
+              if (
+                confirm(
+                  '确定要刷新播放器页面吗？\n\n这将重新加载整个播放器页面，可以解决播放卡顿、加载异常等问题。'
+                )
+              ) {
                 send({ type: 'system', payload: { action: 'reload' } });
               }
             }}
             title='刷新播放器页面'
           >
-            <svg className='w-5 h-5 mx-auto text-gray-700 dark:text-gray-300' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
-              <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15' />
+            <svg
+              className='w-5 h-5 mx-auto text-gray-700 dark:text-gray-300'
+              fill='none'
+              stroke='currentColor'
+              viewBox='0 0 24 24'
+            >
+              <path
+                strokeLinecap='round'
+                strokeLinejoin='round'
+                strokeWidth={2}
+                d='M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15'
+              />
             </svg>
           </button>
         </div>
@@ -452,7 +688,10 @@ export default function ControllerPage({
                   className='h-11 rounded-lg bg-blue-500 text-white font-medium hover:bg-blue-600 transition-colors'
                   onClick={() => {
                     try {
-                      send({ type: 'episode', payload: { action: 'previous' } });
+                      send({
+                        type: 'episode',
+                        payload: { action: 'previous' },
+                      });
                     } catch (error) {
                       console.warn('发送上一集命令失败:', error);
                     }
@@ -479,7 +718,7 @@ export default function ControllerPage({
                   下一集
                 </button>
               </div>
-              
+
               {/* Episode current info */}
               {meta.episodeIndex && (
                 <div className='text-center text-sm text-gray-600 dark:text-gray-400'>
@@ -488,7 +727,7 @@ export default function ControllerPage({
               )}
             </>
           )}
-          
+
           {/* Source switching control - always show on play page */}
           <div className='flex justify-center'>
             <button
@@ -503,7 +742,7 @@ export default function ControllerPage({
               换源
             </button>
           </div>
-          
+
           {/* Main playback controls */}
           <div className='grid grid-cols-2 gap-3'>
             <button
@@ -525,7 +764,10 @@ export default function ControllerPage({
             <button
               className='h-11 rounded-lg bg-primary-500 text-white font-medium'
               onClick={() =>
-                send({ type: 'playback', payload: { action: 'seek', value: -10 } })
+                send({
+                  type: 'playback',
+                  payload: { action: 'seek', value: -10 },
+                })
               }
             >
               -10s
@@ -533,20 +775,26 @@ export default function ControllerPage({
             <button
               className='h-11 rounded-lg bg-primary-500 text-white font-medium'
               onClick={() =>
-                send({ type: 'playback', payload: { action: 'seek', value: +10 } })
+                send({
+                  type: 'playback',
+                  payload: { action: 'seek', value: +10 },
+                })
               }
             >
               +10s
             </button>
           </div>
-          
+
           {/* Fullscreen controls */}
           <div className='grid grid-cols-2 gap-3'>
             <button
               className='h-11 rounded-lg bg-orange-500 text-white font-medium hover:bg-orange-600 transition-colors'
               onClick={() => {
                 try {
-                  send({ type: 'playback', payload: { action: 'enterWebFullscreen' } });
+                  send({
+                    type: 'playback',
+                    payload: { action: 'enterWebFullscreen' },
+                  });
                 } catch (error) {
                   console.warn('发送网页全屏命令失败:', error);
                 }
@@ -558,7 +806,10 @@ export default function ControllerPage({
               className='h-11 rounded-lg bg-orange-500 text-white font-medium hover:bg-orange-600 transition-colors'
               onClick={() => {
                 try {
-                  send({ type: 'playback', payload: { action: 'exitWebFullscreen' } });
+                  send({
+                    type: 'playback',
+                    payload: { action: 'exitWebFullscreen' },
+                  });
                 } catch (error) {
                   console.warn('发送退出网页全屏命令失败:', error);
                 }
@@ -569,11 +820,17 @@ export default function ControllerPage({
           </div>
         </div>
       )}
-      
+
       {/* Episode Selector Modal */}
       {showEpisodeSelector && (
-        <div className='fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50' onClick={() => setShowEpisodeSelector(false)}>
-          <div className='bg-white dark:bg-gray-800 rounded-lg p-6 w-[90vw] max-w-4xl max-h-[90vh] overflow-hidden' onClick={e => e.stopPropagation()}>
+        <div
+          className='fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50'
+          onClick={() => setShowEpisodeSelector(false)}
+        >
+          <div
+            className='bg-white dark:bg-gray-800 rounded-lg p-6 w-[90vw] max-w-4xl max-h-[90vh] overflow-hidden'
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className='flex justify-between items-center mb-4'>
               <h3 className='text-lg font-semibold'>
                 {availableSources.length > 0 ? '选择播放源' : '选择集数'}
@@ -585,16 +842,21 @@ export default function ControllerPage({
                 ×
               </button>
             </div>
-            
+
             {/* Use EpisodeSelector component for both episode selection and source switching */}
             <EpisodeSelector
               totalEpisodes={meta.totalEpisodes || 1}
               value={meta.episodeIndex || 1}
               onChange={(episodeNumber) => {
                 try {
-                  // Convert to 0-based index for the remote call
-                  const episode = episodeNumber - 1;
-                  send({ type: 'episode', payload: { action: 'select', episode } });
+                  console.log('遥控器选集:', { episodeNumber, meta: meta });
+                  // EpisodeSelector 已经传递了 0-based index，不需要再减1
+                  const episode = episodeNumber;
+                  console.log('发送选集命令:', { episode, episodeNumber });
+                  send({
+                    type: 'episode',
+                    payload: { action: 'select', episode },
+                  });
                   setShowEpisodeSelector(false);
                 } catch (error) {
                   console.warn('发送选集命令失败:', error);

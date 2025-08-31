@@ -29,13 +29,20 @@ export async function POST(request: Request) {
     if (!isAllowedOrigin(request)) {
       const originHeader = request.headers.get('origin') || '';
       const reqUrl = new URL(request.url);
-      const checkMode = (process.env.REMOTE_ORIGIN_CHECK || 'loopback').toLowerCase();
+      const checkMode = (
+        process.env.REMOTE_ORIGIN_CHECK || 'loopback'
+      ).toLowerCase();
       const nodeEnv = process.env.NODE_ENV || 'development';
       return json(
         {
           code: 403,
           message: 'forbidden origin',
-          data: { origin: originHeader, urlOrigin: reqUrl.origin, checkMode, nodeEnv },
+          data: {
+            origin: originHeader,
+            urlOrigin: reqUrl.origin,
+            checkMode,
+            nodeEnv,
+          },
         },
         { status: 403 }
       );
@@ -63,7 +70,7 @@ export async function POST(request: Request) {
     // We accept signed token without hashing check to allow rotation without immediate update.
 
     const lockKey = `lock:${sid}`;
-    const lockTtl = 30;
+    const lockTtl = 20; // 减少锁TTL到20秒，提高响应性
 
     // Heartbeat: extend existing lock
     if (heartbeat && controllerId) {
@@ -93,6 +100,25 @@ export async function POST(request: Request) {
           data: { controllerId: newControllerId, sid },
         });
       }
+
+      // Check if the lock has expired but session still has controllerId
+      // This can happen when heartbeat fails but session data persists
+      if (!current && s.controllerId) {
+        // Lock expired, allow new controller to take over
+        // Clear the old controllerId from session
+        await hset(`s:${sid}`, { controllerId: '' });
+        // Try to acquire lock again
+        const retryAcquired = await setnxex(lockKey, newControllerId, lockTtl);
+        if (retryAcquired) {
+          await hset(`s:${sid}`, { controllerId: newControllerId });
+          return json({
+            code: 0,
+            message: 'ok',
+            data: { controllerId: newControllerId, sid },
+          });
+        }
+      }
+
       return json({ code: 423, message: 'locked' }, { status: 423 });
     }
 

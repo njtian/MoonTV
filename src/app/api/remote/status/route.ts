@@ -1,5 +1,5 @@
 /* eslint-disable no-console */
-import { hgetall, publish } from '@/lib/remote/redis';
+import { get, hgetall, publish } from '@/lib/remote/redis';
 import { isAllowedOrigin, isRemoteEnabled } from '@/lib/remote/security';
 import { verifyPairingToken } from '@/lib/remote/token';
 
@@ -28,13 +28,20 @@ export async function POST(request: Request) {
     if (!isAllowedOrigin(request)) {
       const originHeader = request.headers.get('origin') || '';
       const reqUrl = new URL(request.url);
-      const checkMode = (process.env.REMOTE_ORIGIN_CHECK || 'loopback').toLowerCase();
+      const checkMode = (
+        process.env.REMOTE_ORIGIN_CHECK || 'loopback'
+      ).toLowerCase();
       const nodeEnv = process.env.NODE_ENV || 'development';
       return json(
         {
           code: 403,
           message: 'forbidden origin',
-          data: { origin: originHeader, urlOrigin: reqUrl.origin, checkMode, nodeEnv },
+          data: {
+            origin: originHeader,
+            urlOrigin: reqUrl.origin,
+            checkMode,
+            nodeEnv,
+          },
         },
         { status: 403 }
       );
@@ -65,7 +72,66 @@ export async function POST(request: Request) {
     return json({ code: 0, message: 'ok' });
   } catch (err) {
     console.error('Status publish error', err);
-    return json({ code: 500, message: 'Internal Server Error' }, { status: 500 });
+    return json(
+      { code: 500, message: 'Internal Server Error' },
+      { status: 500 }
+    );
+  }
+}
+
+// 新增：GET方法用于检查会话状态
+export async function GET(request: Request) {
+  try {
+    if (!isRemoteEnabled()) {
+      return json({ code: 400, message: 'Remote disabled' }, { status: 400 });
+    }
+
+    const url = new URL(request.url);
+    const sid = url.searchParams.get('sid');
+    const token = url.searchParams.get('t');
+
+    if (!sid || !token) {
+      return json(
+        { code: 400, message: 'sid and token required' },
+        { status: 400 }
+      );
+    }
+
+    // Verify token belongs to sid
+    const payload = await verifyPairingToken(token);
+    if (!payload || payload.sid !== sid) {
+      return json({ code: 401, message: 'invalid token' }, { status: 401 });
+    }
+
+    // Get session info
+    const s = await hgetall(`s:${sid}`);
+    if (!s || !s.ownerUserId) {
+      return json({ code: 404, message: 'session not found' }, { status: 404 });
+    }
+
+    // Check if session is locked
+    const lockKey = `lock:${sid}`;
+    const currentLock = await get(lockKey);
+
+    return json({
+      code: 0,
+      message: 'ok',
+      data: {
+        sid,
+        owner: s.ownerUserId,
+        status: s.status,
+        controllerId: s.controllerId,
+        isLocked: !!currentLock,
+        lockOwner: currentLock,
+        createdAt: s.createdAt,
+      },
+    });
+  } catch (err) {
+    console.error('Session status check error', err);
+    return json(
+      { code: 500, message: 'Internal Server Error' },
+      { status: 500 }
+    );
   }
 }
 

@@ -7,7 +7,9 @@ export function isRemoteEnabled(): boolean {
 export function isAllowedOrigin(request: Request): boolean {
   // Configurable origin check for remote APIs
   // REMOTE_ORIGIN_CHECK: 'off' | 'loopback' | 'strict'
-  const checkMode = (process.env.REMOTE_ORIGIN_CHECK || 'loopback').toLowerCase();
+  const checkMode = (
+    process.env.REMOTE_ORIGIN_CHECK || 'loopback'
+  ).toLowerCase();
   if (checkMode === 'off' || process.env.NODE_ENV !== 'production') return true;
 
   // Basic CSRF mitigation: require same-origin for POSTs by default

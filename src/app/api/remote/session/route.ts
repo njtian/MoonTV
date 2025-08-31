@@ -26,7 +26,9 @@ export async function POST(request: Request) {
       // Debug details to help diagnose local dev issues
       const originHeader = request.headers.get('origin') || '';
       const reqUrl = new URL(request.url);
-      const checkMode = (process.env.REMOTE_ORIGIN_CHECK || 'loopback').toLowerCase();
+      const checkMode = (
+        process.env.REMOTE_ORIGIN_CHECK || 'loopback'
+      ).toLowerCase();
       const nodeEnv = process.env.NODE_ENV || 'development';
       return json(
         {
@@ -65,7 +67,8 @@ export async function POST(request: Request) {
     const u = new URL(request.url);
     // Normalize 0.0.0.0 for dev; prefer forwarded host if present
     const xfHost = request.headers.get('x-forwarded-host');
-    const xfProto = request.headers.get('x-forwarded-proto') || u.protocol.replace(':', '');
+    const xfProto =
+      request.headers.get('x-forwarded-proto') || u.protocol.replace(':', '');
     let origin = u.origin;
     if (xfHost) {
       origin = `${xfProto || 'http'}://${xfHost}`;

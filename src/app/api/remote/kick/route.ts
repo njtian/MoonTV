@@ -24,13 +24,20 @@ export async function POST(request: Request) {
     if (!isAllowedOrigin(request)) {
       const originHeader = request.headers.get('origin') || '';
       const reqUrl = new URL(request.url);
-      const checkMode = (process.env.REMOTE_ORIGIN_CHECK || 'loopback').toLowerCase();
+      const checkMode = (
+        process.env.REMOTE_ORIGIN_CHECK || 'loopback'
+      ).toLowerCase();
       const nodeEnv = process.env.NODE_ENV || 'development';
       return json(
         {
           code: 403,
           message: 'forbidden origin',
-          data: { origin: originHeader, urlOrigin: reqUrl.origin, checkMode, nodeEnv },
+          data: {
+            origin: originHeader,
+            urlOrigin: reqUrl.origin,
+            checkMode,
+            nodeEnv,
+          },
         },
         { status: 403 }
       );

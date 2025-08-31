@@ -81,17 +81,19 @@ export default function RemoteControlProvider() {
   // Subscribe SSE on session ready and dispatch to window (kept for screen-side consumers)
   React.useEffect(() => {
     if (!session?.sid) return;
-    
+
     try {
       // Close existing connection
       if (sseRef.current) {
         sseRef.current.close();
         sseRef.current = null;
       }
-      
-      const es = new EventSource(`/api/remote/stream?sid=${encodeURIComponent(session.sid)}`);
+
+      const es = new EventSource(
+        `/api/remote/stream?sid=${encodeURIComponent(session.sid)}`
+      );
       sseRef.current = es;
-      
+
       es.onmessage = (ev) => {
         try {
           const data = JSON.parse(ev.data);
@@ -103,15 +105,14 @@ export default function RemoteControlProvider() {
           console.warn('解析SSE消息失败:', parseError);
         }
       };
-      
+
       es.onerror = (error) => {
         console.warn('SSE连接错误:', error);
       };
-      
     } catch (sseError) {
       console.warn('创建SSE连接失败:', sseError);
     }
-    
+
     return () => {
       if (sseRef.current) {
         try {

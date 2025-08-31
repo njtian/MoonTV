@@ -44,7 +44,6 @@ function HomeClient() {
   };
   const [favoriteItems, setFavoriteItems] = useState<FavoriteItem[]>([]);
 
-
   const [showAnnouncement, setShowAnnouncement] = useState(false);
 
   // 检查公告弹窗状态

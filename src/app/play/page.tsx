@@ -198,6 +198,11 @@ function PlayPageClient() {
   const artPlayerRef = useRef<any>(null);
   const artRef = useRef<HTMLDivElement | null>(null);
 
+  // 创建函数引用以避免闭包问题
+  const handleEpisodeChangeRef = useRef<(episodeNumber: number) => void>();
+  const handlePreviousEpisodeRef = useRef<() => void>();
+  const handleNextEpisodeRef = useRef<() => void>();
+
   // -----------------------------------------------------------------------------
   // 工具函数（Utils）
   // -----------------------------------------------------------------------------
@@ -938,6 +943,23 @@ function PlayPageClient() {
           }
           return;
         }
+        if (type === 'episode') {
+          const action = payload.action;
+          console.log('收到剧集控制消息:', { type, action, episode: payload.episode });
+          if (action === 'previous') {
+            console.log('执行上一集');
+            handlePreviousEpisodeRef.current?.();
+          }
+          if (action === 'next') {
+            console.log('执行下一集');
+            handleNextEpisodeRef.current?.();
+          }
+          if (action === 'select' && typeof payload.episode === 'number') {
+            console.log('执行选集:', payload.episode);
+            handleEpisodeChangeRef.current?.(payload.episode);
+          }
+          return;
+        }
         if (type === 'focus') {
           const key = payload.key;
           if (key === 'left') handleKeyboardShortcuts(new KeyboardEvent('keydown', { key: 'ArrowLeft' }));
@@ -946,6 +968,14 @@ function PlayPageClient() {
           if (key === 'down') handleKeyboardShortcuts(new KeyboardEvent('keydown', { key: 'ArrowDown' }));
           if (key === 'enter') artPlayerRef.current.toggle();
           if (key === 'back') window.history.back();
+          return;
+        }
+        if (type === 'system') {
+          const action = payload.action;
+          if (action === 'reload') {
+            console.log('收到刷新命令，正在刷新页面...');
+            window.location.reload();
+          }
           return;
         }
       } catch {
@@ -978,7 +1008,9 @@ function PlayPageClient() {
             const s = JSON.parse(sidRaw);
             sid = s.sid || '';
             token = s.token || '';
-          } catch {}
+          } catch {
+            // ignore parse error
+          }
         }
         if (dur > 0 && sid && token) {
           await fetch('/api/remote/status', {
@@ -1004,7 +1036,9 @@ function PlayPageClient() {
             }),
           });
         }
-      } catch {}
+      } catch {
+        // ignore error
+      }
       timer = setTimeout(tick, 2000);
     };
     tick();
@@ -1016,12 +1050,16 @@ function PlayPageClient() {
   // ---------------------------------------------------------------------------
   // 处理集数切换
   const handleEpisodeChange = (episodeNumber: number) => {
+    console.log('handleEpisodeChange 被调用:', { episodeNumber, totalEpisodes, currentEpisodeIndex });
     if (episodeNumber >= 0 && episodeNumber < totalEpisodes) {
+      console.log('切换到集数:', episodeNumber);
       // 在更换集数前保存当前播放进度
       if (artPlayerRef.current && artPlayerRef.current.paused) {
         saveCurrentPlayProgress();
       }
       setCurrentEpisodeIndex(episodeNumber);
+    } else {
+      console.warn('无效的集数索引:', { episodeNumber, totalEpisodes });
     }
   };
 
@@ -1046,6 +1084,11 @@ function PlayPageClient() {
       setCurrentEpisodeIndex(idx + 1);
     }
   };
+
+  // 更新函数引用
+  handleEpisodeChangeRef.current = handleEpisodeChange;
+  handlePreviousEpisodeRef.current = handlePreviousEpisode;
+  handleNextEpisodeRef.current = handleNextEpisode;
 
   // ---------------------------------------------------------------------------
   // 键盘快捷键

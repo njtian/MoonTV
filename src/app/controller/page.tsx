@@ -33,6 +33,9 @@ export default function ControllerPage({
     totalEpisodes?: number;
     cover?: string;
   }>({});
+  
+  // Episode selector state
+  const [showEpisodeSelector, setShowEpisodeSelector] = React.useState(false);
 
   React.useEffect(() => {
     let mounted = true;
@@ -72,7 +75,10 @@ export default function ControllerPage({
   }, [controllerId, sid, token]);
 
   const send = async (message: unknown) => {
-    if (!sid || !token || !controllerId) return;
+    if (!sid || !token || !controllerId) {
+      console.warn('send 函数缺少必要参数:', { sid: !!sid, token: !!token, controllerId: !!controllerId });
+      return;
+    }
     try {
       await jsonFetch('/api/remote/publish', {
         sid,
@@ -198,7 +204,7 @@ export default function ControllerPage({
   };
 
   return (
-    <div className='mx-auto max-w-md p-4'>
+    <div className='mx-auto max-w-md p-4 relative'>
       <h1 className='mb-2 text-xl font-semibold'>MoonTV 遥控器</h1>
       <p className='mb-4 text-sm opacity-70'>状态：{getStatusText()}</p>
 
@@ -304,6 +310,25 @@ export default function ControllerPage({
         </div>
       )}
 
+      {/* Refresh button - only show on play page */}
+      {pageStatus.page === 'play' && (
+        <div className='absolute top-4 right-4'>
+          <button
+            className='w-10 h-10 rounded-full bg-white/90 dark:bg-zinc-800/90 backdrop-blur-sm shadow-lg hover:bg-white dark:hover:bg-zinc-700 transition-all duration-200 hover:scale-110 active:scale-95 border border-gray-200 dark:border-zinc-700'
+            onClick={() => {
+              if (confirm('确定要刷新播放器页面吗？\n\n这将重新加载整个播放器页面，可以解决播放卡顿、加载异常等问题。')) {
+                send({ type: 'system', payload: { action: 'reload' } });
+              }
+            }}
+            title='刷新播放器页面'
+          >
+            <svg className='w-5 h-5 mx-auto text-gray-700 dark:text-gray-300' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+              <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15' />
+            </svg>
+          </button>
+        </div>
+      )}
+
       <div className='grid grid-cols-3 gap-3'>
         <div />
         <button
@@ -353,6 +378,51 @@ export default function ControllerPage({
       {/* Show playback controls only on play page */}
       {pageStatus.page === 'play' && (
         <div className='mt-4 space-y-3'>
+          {/* Episode navigation controls - show only if multiple episodes */}
+          {meta.totalEpisodes && meta.totalEpisodes > 1 && (
+            <>
+              <div className='grid grid-cols-3 gap-3'>
+                <button
+                  className='h-11 rounded-lg bg-blue-500 text-white font-medium hover:bg-blue-600 transition-colors'
+                  onClick={() => {
+                    try {
+                      send({ type: 'episode', payload: { action: 'previous' } });
+                    } catch (error) {
+                      console.warn('发送上一集命令失败:', error);
+                    }
+                  }}
+                >
+                  上一集
+                </button>
+                <button
+                  className='h-11 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 transition-colors'
+                  onClick={() => setShowEpisodeSelector(true)}
+                >
+                  选集
+                </button>
+                <button
+                  className='h-11 rounded-lg bg-blue-500 text-white font-medium hover:bg-blue-600 transition-colors'
+                  onClick={() => {
+                    try {
+                      send({ type: 'episode', payload: { action: 'next' } });
+                    } catch (error) {
+                      console.warn('发送下一集命令失败:', error);
+                    }
+                  }}
+                >
+                  下一集
+                </button>
+              </div>
+              
+              {/* Episode current info */}
+              {meta.episodeIndex && (
+                <div className='text-center text-sm text-gray-600 dark:text-gray-400'>
+                  当前：第 {meta.episodeIndex} 集 / 共 {meta.totalEpisodes} 集
+                </div>
+              )}
+            </>
+          )}
+          
           {/* Main playback controls */}
           <div className='grid grid-cols-2 gap-3'>
             <button
@@ -415,6 +485,49 @@ export default function ControllerPage({
             >
               退出全屏
             </button>
+          </div>
+        </div>
+      )}
+      
+      {/* Episode Selector Modal */}
+      {showEpisodeSelector && meta.totalEpisodes && meta.totalEpisodes > 1 && (
+        <div className='fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50' onClick={() => setShowEpisodeSelector(false)}>
+          <div className='bg-white dark:bg-gray-800 rounded-lg p-6 w-80 max-h-96 overflow-hidden' onClick={e => e.stopPropagation()}>
+            <div className='flex justify-between items-center mb-4'>
+              <h3 className='text-lg font-semibold'>选择集数</h3>
+              <button
+                onClick={() => setShowEpisodeSelector(false)}
+                className='text-gray-500 hover:text-gray-700 text-2xl'
+              >
+                ×
+              </button>
+            </div>
+            
+            {/* Episode grid */}
+            <div className='grid grid-cols-4 gap-2 max-h-64 overflow-y-auto'>
+              {Array.from({ length: meta.totalEpisodes }, (_, i) => i + 1).map((episodeNum) => (
+                <button
+                  key={episodeNum}
+                  className={`h-12 rounded-lg text-sm font-medium transition-colors ${
+                    episodeNum === meta.episodeIndex
+                      ? 'bg-blue-500 text-white'
+                      : 'bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 hover:bg-blue-100 dark:hover:bg-blue-700'
+                  }`}
+                  onClick={() => {
+                    try {
+                      // Convert to 0-based index for the remote call
+                      const episode = episodeNum - 1;
+                      send({ type: 'episode', payload: { action: 'select', episode } });
+                      setShowEpisodeSelector(false);
+                    } catch (error) {
+                      console.warn('发送选集命令失败:', error);
+                    }
+                  }}
+                >
+                  {episodeNum}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       )}

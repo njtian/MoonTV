@@ -53,19 +53,45 @@ export default function RemoteControlProvider() {
   const copyUrl = async () => {
     if (!session) return;
     try {
-      await navigator.clipboard.writeText(session.controllerUrl);
-    } catch {
-      // ignore copy error
+      // Check if clipboard API is available and secure context
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(session.controllerUrl);
+      } else {
+        // Fallback for non-secure contexts
+        const textArea = document.createElement('textarea');
+        textArea.value = session.controllerUrl;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-999999px';
+        textArea.style.top = '-999999px';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        try {
+          document.execCommand('copy');
+        } finally {
+          document.body.removeChild(textArea);
+        }
+      }
+    } catch (error) {
+      console.warn('复制到剪贴板失败:', error);
+      // ignore copy error - just fail silently
     }
   };
 
   // Subscribe SSE on session ready and dispatch to window (kept for screen-side consumers)
   React.useEffect(() => {
     if (!session?.sid) return;
+    
     try {
-      sseRef.current?.close();
+      // Close existing connection
+      if (sseRef.current) {
+        sseRef.current.close();
+        sseRef.current = null;
+      }
+      
       const es = new EventSource(`/api/remote/stream?sid=${encodeURIComponent(session.sid)}`);
       sseRef.current = es;
+      
       es.onmessage = (ev) => {
         try {
           const data = JSON.parse(ev.data);
@@ -73,16 +99,28 @@ export default function RemoteControlProvider() {
           window.dispatchEvent(
             new CustomEvent('remote:message', { detail: data })
           );
-        } catch {
-          // ignore
+        } catch (parseError) {
+          console.warn('解析SSE消息失败:', parseError);
         }
       };
-    } catch {
-      // ignore
+      
+      es.onerror = (error) => {
+        console.warn('SSE连接错误:', error);
+      };
+      
+    } catch (sseError) {
+      console.warn('创建SSE连接失败:', sseError);
     }
+    
     return () => {
-      sseRef.current?.close();
-      sseRef.current = null;
+      if (sseRef.current) {
+        try {
+          sseRef.current.close();
+        } catch (closeError) {
+          console.warn('关闭SSE连接失败:', closeError);
+        }
+        sseRef.current = null;
+      }
     };
   }, [session?.sid]);
 

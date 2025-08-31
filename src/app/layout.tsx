@@ -11,6 +11,7 @@ import { getConfig } from '@/lib/config';
 
 import { GlobalErrorIndicator } from '../components/GlobalErrorIndicator';
 import RemoteControlProvider from '../components/RemoteControlProvider';
+import { RemoteStatusReporter } from '../components/RemoteStatusReporter';
 import { SiteProvider } from '../components/SiteProvider';
 import { ThemeProvider } from '../components/ThemeProvider';
 
@@ -114,7 +115,12 @@ export default async function RootLayout({ children }: { children: any }) {
             <GlobalErrorIndicator />
             {(runtimeConfig.STORAGE_TYPE === 'redis' ||
               runtimeConfig.STORAGE_TYPE === 'upstash') &&
-              runtimeConfig.ENABLE_REMOTE && <RemoteControlProvider />}
+              runtimeConfig.ENABLE_REMOTE && (
+                <>
+                  <RemoteControlProvider />
+                  <RemoteStatusReporter />
+                </>
+              )}
           </SiteProvider>
         </ThemeProvider>
       </body>

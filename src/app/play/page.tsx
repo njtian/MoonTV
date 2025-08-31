@@ -909,6 +909,24 @@ function PlayPageClient() {
               artPlayerRef.current.currentTime = Math.min(dur - 0.5, seconds);
             }
           }
+          if (action === 'enterWebFullscreen') {
+            try {
+              if (artPlayerRef.current && !artPlayerRef.current.fullscreenWeb) {
+                artPlayerRef.current.fullscreenWeb = true;
+              }
+            } catch (error) {
+              console.warn('进入网页全屏失败:', error);
+            }
+          }
+          if (action === 'exitWebFullscreen') {
+            try {
+              if (artPlayerRef.current && artPlayerRef.current.fullscreenWeb) {
+                artPlayerRef.current.fullscreenWeb = false;
+              }
+            } catch (error) {
+              console.warn('退出网页全屏失败:', error);
+            }
+          }
           return;
         }
         if (type === 'volume') {
@@ -972,6 +990,8 @@ function PlayPageClient() {
               message: {
                 type: 'status',
                 payload: {
+                  page: 'play' as const,
+                  pageTitle: '播放页面',
                   duration: dur,
                   currentTime: ct,
                   paused: !!artPlayerRef.current?.paused,

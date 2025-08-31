@@ -23,6 +23,10 @@ export default function ControllerPage({
   const [status, setStatus] = React.useState<
     'idle' | 'claiming' | 'ready' | 'error'
   >('idle');
+  const [pageStatus, setPageStatus] = React.useState<{
+    page?: 'home' | 'play' | 'search' | 'detail' | 'other';
+    pageTitle?: string;
+  }>({});
   const [meta, setMeta] = React.useState<{
     title?: string;
     episodeIndex?: number;
@@ -69,12 +73,16 @@ export default function ControllerPage({
 
   const send = async (message: unknown) => {
     if (!sid || !token || !controllerId) return;
-    await jsonFetch('/api/remote/publish', {
-      sid,
-      token,
-      controllerId,
-      message,
-    });
+    try {
+      await jsonFetch('/api/remote/publish', {
+        sid,
+        token,
+        controllerId,
+        message,
+      });
+    } catch (error) {
+      console.warn('发送远程控制消息失败:', error);
+    }
   };
 
   // Slider for seeking to percentage
@@ -95,34 +103,69 @@ export default function ControllerPage({
   // Subscribe SSE directly to receive status and other messages
   React.useEffect(() => {
     if (!sid) return;
-    const es = new EventSource(`/api/remote/stream?sid=${encodeURIComponent(sid)}`);
-    const onMsg = (ev: MessageEvent) => {
-      try {
-        const data = JSON.parse(ev.data);
-        const msg = data?.message || data;
-        if (!msg) return;
-        if (msg.type === 'status') {
-          const d = msg.payload?.duration;
-          const ct = msg.payload?.currentTime;
-          if (typeof d === 'number') setDuration(d);
-          if (typeof ct === 'number' && !isSeeking) {
-            setCurrentTime(ct);
-            if (typeof d === 'number' && d > 0) {
-              setPercent(Math.round((ct / d) * 100));
+    
+    let es: EventSource | null = null;
+    
+    try {
+      es = new EventSource(`/api/remote/stream?sid=${encodeURIComponent(sid)}`);
+      
+      const onMsg = (ev: MessageEvent) => {
+        try {
+          const data = JSON.parse(ev.data);
+          const msg = data?.message || data;
+          if (!msg) return;
+          if (msg.type === 'status') {
+            // Handle page status
+            if (msg.payload?.page) {
+              setPageStatus({
+                page: msg.payload.page,
+                pageTitle: msg.payload.pageTitle
+              });
+            }
+            
+            // Handle play page status
+            const d = msg.payload?.duration;
+            const ct = msg.payload?.currentTime;
+            if (typeof d === 'number') setDuration(d);
+            if (typeof ct === 'number' && !isSeeking) {
+              setCurrentTime(ct);
+              if (typeof d === 'number' && d > 0) {
+                setPercent(Math.round((ct / d) * 100));
+              }
+            }
+            const title = msg.payload?.title;
+            const episodeIndex = msg.payload?.episodeIndex;
+            const totalEpisodes = msg.payload?.totalEpisodes;
+            const cover = msg.payload?.cover;
+            if (title || episodeIndex || totalEpisodes || cover) {
+              setMeta({ title, episodeIndex, totalEpisodes, cover });
             }
           }
-          const title = msg.payload?.title;
-          const episodeIndex = msg.payload?.episodeIndex;
-          const totalEpisodes = msg.payload?.totalEpisodes;
-          const cover = msg.payload?.cover;
-          setMeta({ title, episodeIndex, totalEpisodes, cover });
+        } catch (parseError) {
+          console.warn('解析SSE消息失败:', parseError);
         }
-      } catch {
-        // ignore
+      };
+      
+      const onError = (error: Event) => {
+        console.warn('SSE连接错误:', error);
+      };
+      
+      es.onmessage = onMsg;
+      es.onerror = onError;
+      
+    } catch (sseError) {
+      console.warn('创建SSE连接失败:', sseError);
+    }
+    
+    return () => {
+      if (es) {
+        try {
+          es.close();
+        } catch (closeError) {
+          console.warn('关闭SSE连接失败:', closeError);
+        }
       }
     };
-    es.onmessage = onMsg;
-    return () => es.close();
   }, [sid, isSeeking]);
 
   // Remove window relay listener (we now consume SSE directly)
@@ -138,25 +181,45 @@ export default function ControllerPage({
     return h > 0 ? `${pad(h)}:${pad(m)}:${pad(r)}` : `${pad(m)}:${pad(r)}`;
   };
 
+  // Get display status text
+  const getStatusText = () => {
+    if (status === 'error') return '连接错误';
+    if (status === 'claiming') return '连接中...';
+    if (status === 'idle') return '未连接';
+    if (status === 'ready') {
+      if (pageStatus.page === 'play') return '播放页面';
+      if (pageStatus.page === 'home') return '首页';
+      if (pageStatus.page === 'search') return '搜索页面';
+      if (pageStatus.page === 'detail') return '详情页面';
+      if (pageStatus.page === 'other') return '其他页面';
+      return '已连接';
+    }
+    return status;
+  };
+
   return (
     <div className='mx-auto max-w-md p-4'>
       <h1 className='mb-2 text-xl font-semibold'>MoonTV 遥控器</h1>
-      <p className='mb-4 text-sm opacity-70'>状态：{status}</p>
+      <p className='mb-4 text-sm opacity-70'>状态：{getStatusText()}</p>
 
-      {/* Poster and meta */}
-      <div className='flex gap-3 items-center mb-4'>
-        <div className='w-20 h-28 rounded overflow-hidden bg-gray-200 dark:bg-zinc-800 flex items-center justify-center'>
-          {meta.cover ? (
-            <img src={meta.cover} alt='poster' className='w-full h-full object-cover' referrerPolicy='no-referrer' />
-          ) : (
-            <span className='text-xs opacity-60'>无封面</span>
-          )}
-        </div>
-        <div className='flex-1 min-w-0'>
-          <div className='text-sm font-medium truncate'>{meta.title || '—'}</div>
-          <div className='text-xs opacity-70 mt-1'>
-            {meta.episodeIndex ? `第 ${meta.episodeIndex} 集` : ''}
-            {meta.totalEpisodes ? ` / 共 ${meta.totalEpisodes} 集` : ''}
+      {/* Show poster and meta only on play page */}
+      {pageStatus.page === 'play' && (
+        <div className='mb-4'>
+          <div className='flex gap-3 items-center mb-4'>
+            <div className='w-20 h-28 rounded overflow-hidden bg-gray-200 dark:bg-zinc-800 flex items-center justify-center'>
+              {meta.cover ? (
+                <img src={meta.cover} alt='poster' className='w-full h-full object-cover' referrerPolicy='no-referrer' />
+              ) : (
+                <span className='text-xs opacity-60'>无封面</span>
+              )}
+            </div>
+            <div className='flex-1 min-w-0'>
+              <div className='text-sm font-medium truncate'>{meta.title || '—'}</div>
+              <div className='text-xs opacity-70 mt-1'>
+                {meta.episodeIndex ? `第 ${meta.episodeIndex} 集` : ''}
+                {meta.totalEpisodes ? ` / 共 ${meta.totalEpisodes} 集` : ''}
+              </div>
+            </div>
           </div>
           {/* Progress bar visual (styled similar to player) */}
           {/* Draggable progress bar */}
@@ -231,7 +294,15 @@ export default function ControllerPage({
               : '—'}
           </div>
         </div>
-      </div>
+      )}
+      
+      {/* Show non-play page info */}
+      {pageStatus.page && pageStatus.page !== 'play' && (
+        <div className='mb-4 p-4 rounded-lg bg-gray-100 dark:bg-zinc-900'>
+          <p className='text-sm'>当前页面：{pageStatus.pageTitle || pageStatus.page}</p>
+          <p className='text-xs opacity-70 mt-1'>导航控制可用</p>
+        </div>
+      )}
 
       <div className='grid grid-cols-3 gap-3'>
         <div />
@@ -279,40 +350,74 @@ export default function ControllerPage({
         </button>
       </div>
 
-      <div className='mt-4 grid grid-cols-2 gap-3'>
-        <button
-          className='h-11 rounded-lg bg-primary-500 text-white font-medium'
-          onClick={() =>
-            send({ type: 'playback', payload: { action: 'play' } })
-          }
-        >
-          播放
-        </button>
-        <button
-          className='h-11 rounded-lg bg-primary-500 text-white font-medium'
-          onClick={() =>
-            send({ type: 'playback', payload: { action: 'pause' } })
-          }
-        >
-          暂停
-        </button>
-        <button
-          className='h-11 rounded-lg bg-primary-500 text-white font-medium'
-          onClick={() =>
-            send({ type: 'playback', payload: { action: 'seek', value: -10 } })
-          }
-        >
-          -10s
-        </button>
-        <button
-          className='h-11 rounded-lg bg-primary-500 text-white font-medium'
-          onClick={() =>
-            send({ type: 'playback', payload: { action: 'seek', value: +10 } })
-          }
-        >
-          +10s
-        </button>
-      </div>
+      {/* Show playback controls only on play page */}
+      {pageStatus.page === 'play' && (
+        <div className='mt-4 space-y-3'>
+          {/* Main playback controls */}
+          <div className='grid grid-cols-2 gap-3'>
+            <button
+              className='h-11 rounded-lg bg-primary-500 text-white font-medium'
+              onClick={() =>
+                send({ type: 'playback', payload: { action: 'play' } })
+              }
+            >
+              播放
+            </button>
+            <button
+              className='h-11 rounded-lg bg-primary-500 text-white font-medium'
+              onClick={() =>
+                send({ type: 'playback', payload: { action: 'pause' } })
+              }
+            >
+              暂停
+            </button>
+            <button
+              className='h-11 rounded-lg bg-primary-500 text-white font-medium'
+              onClick={() =>
+                send({ type: 'playback', payload: { action: 'seek', value: -10 } })
+              }
+            >
+              -10s
+            </button>
+            <button
+              className='h-11 rounded-lg bg-primary-500 text-white font-medium'
+              onClick={() =>
+                send({ type: 'playback', payload: { action: 'seek', value: +10 } })
+              }
+            >
+              +10s
+            </button>
+          </div>
+          
+          {/* Fullscreen controls */}
+          <div className='grid grid-cols-2 gap-3'>
+            <button
+              className='h-11 rounded-lg bg-orange-500 text-white font-medium hover:bg-orange-600 transition-colors'
+              onClick={() => {
+                try {
+                  send({ type: 'playback', payload: { action: 'enterWebFullscreen' } });
+                } catch (error) {
+                  console.warn('发送网页全屏命令失败:', error);
+                }
+              }}
+            >
+              网页全屏
+            </button>
+            <button
+              className='h-11 rounded-lg bg-orange-500 text-white font-medium hover:bg-orange-600 transition-colors'
+              onClick={() => {
+                try {
+                  send({ type: 'playback', payload: { action: 'exitWebFullscreen' } });
+                } catch (error) {
+                  console.warn('发送退出网页全屏命令失败:', error);
+                }
+              }}
+            >
+              退出全屏
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

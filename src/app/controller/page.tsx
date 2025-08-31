@@ -945,7 +945,7 @@ export default function ControllerPage({
           onClick={() => setShowEpisodeSelector(false)}
         >
           <div
-            className='bg-white dark:bg-gray-800 rounded-lg p-6 w-[90vw] max-w-4xl max-h-[90vh] overflow-hidden'
+            className='bg-white dark:bg-gray-800 rounded-lg p-6 w-[90vw] max-w-4xl h-[90vh] flex flex-col'
             onClick={(e) => e.stopPropagation()}
           >
             <div className='flex justify-between items-center mb-4'>
@@ -961,35 +961,37 @@ export default function ControllerPage({
             </div>
 
             {/* Use EpisodeSelector component for both episode selection and source switching */}
-            <EpisodeSelector
-              totalEpisodes={meta.totalEpisodes || 1}
-              value={meta.episodeIndex || 1}
-              onChange={(episodeNumber) => {
-                try {
-                  // eslint-disable-next-line no-console
-                  console.log('遥控器选集:', { episodeNumber, meta: meta });
-                  // EpisodeSelector 已经传递了 0-based index，不需要再减1
-                  const episode = episodeNumber;
-                  // eslint-disable-next-line no-console
-                  console.log('发送选集命令:', { episode, episodeNumber });
-                  send({
-                    type: 'episode',
-                    payload: { action: 'select', episode },
-                  });
-                  setShowEpisodeSelector(false);
-                } catch (error) {
-                  // eslint-disable-next-line no-console
-                  console.warn('发送选集命令失败:', error);
-                }
-              }}
-              onSourceChange={handleSourceChange}
-              currentSource={meta.currentSource}
-              currentId={meta.currentId}
-              videoTitle={meta.title}
-              availableSources={availableSources}
-              sourceSearchLoading={sourceSearchLoading}
-              sourceSearchError={sourceSearchError}
-            />
+            <div className='flex-1 min-h-0 -mx-6 h-full'>
+              <EpisodeSelector
+                totalEpisodes={meta.totalEpisodes || 1}
+                value={meta.episodeIndex || 1}
+                onChange={(episodeNumber) => {
+                  try {
+                    // eslint-disable-next-line no-console
+                    console.log('遥控器选集:', { episodeNumber, meta: meta });
+                    // EpisodeSelector 已经传递了 0-based index，不需要再减1
+                    const episode = episodeNumber;
+                    // eslint-disable-next-line no-console
+                    console.log('发送选集命令:', { episode, episodeNumber });
+                    send({
+                      type: 'episode',
+                      payload: { action: 'select', episode },
+                    });
+                    setShowEpisodeSelector(false);
+                  } catch (error) {
+                    // eslint-disable-next-line no-console
+                    console.warn('发送选集命令失败:', error);
+                  }
+                }}
+                onSourceChange={handleSourceChange}
+                currentSource={meta.currentSource}
+                currentId={meta.currentId}
+                videoTitle={meta.title}
+                availableSources={availableSources}
+                sourceSearchLoading={sourceSearchLoading}
+                sourceSearchError={sourceSearchError}
+              />
+            </div>
           </div>
         </div>
       )}

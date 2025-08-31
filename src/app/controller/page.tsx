@@ -26,7 +26,7 @@ export default function ControllerPage({
   const token = searchParams?.t || '';
   const [controllerId, setControllerId] = React.useState<string | null>(null);
   const [status, setStatus] = React.useState<
-    'idle' | 'claiming' | 'ready' | 'error'
+    'idle' | 'claiming' | 'ready' | 'error' | 'reconnecting'
   >('idle');
   const [pageStatus, setPageStatus] = React.useState<{
     page?: 'home' | 'play' | 'search' | 'detail' | 'other';
@@ -84,13 +84,14 @@ export default function ControllerPage({
             window.location.reload();
           } else {
             // 有URL参数时，检查会话状态
-            checkSessionStatus(session.sid, session.token);
+            checkSessionStatusRef.current(session.sid, session.token);
           }
         } else {
           // 会话过期，清除本地存储
           localStorage.removeItem('rc_controller_session');
         }
       } catch (error) {
+        // eslint-disable-next-line no-console
         console.warn('解析本地会话失败:', error);
         localStorage.removeItem('rc_controller_session');
       }
@@ -107,24 +108,42 @@ export default function ControllerPage({
         if (res.ok) {
           const data = await res.json();
           if (data.code === 0) {
+            // eslint-disable-next-line no-console
             console.log('会话状态检查成功:', data.data);
             // 如果会话被锁定且不是当前控制器，尝试重新claim
             if (
               data.data.isLocked &&
               data.data.lockOwner !== localSession?.controllerId
             ) {
+              // eslint-disable-next-line no-console
               console.log('检测到会话被其他控制器占用，尝试重新claim');
               setControllerId(null);
               setStatus('idle');
+              // 延迟重连，避免立即冲突
+              setTimeout(() => {
+                // 使用函数引用避免循环依赖
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                if ((window as any).attemptReconnectionRef) {
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  (window as any).attemptReconnectionRef();
+                }
+              }, 1000);
             }
           }
         }
       } catch (error) {
+        // eslint-disable-next-line no-console
         console.warn('检查会话状态失败:', error);
       }
     },
     [localSession?.controllerId]
   );
+
+  // 使用useRef避免循环依赖
+  const checkSessionStatusRef = React.useRef(checkSessionStatus);
+  React.useEffect(() => {
+    checkSessionStatusRef.current = checkSessionStatus;
+  }, [checkSessionStatus]);
 
   // 保存会话到本地存储
   const saveSessionToLocal = React.useCallback(
@@ -144,6 +163,52 @@ export default function ControllerPage({
     setLocalSession(null);
     localStorage.removeItem('rc_controller_session');
   }, []);
+
+  // 新增：智能重连函数
+  const attemptReconnection = React.useCallback(async () => {
+    if (!sid || !token) return;
+
+    // eslint-disable-next-line no-console
+    console.log('尝试重新连接...');
+    setStatus('reconnecting');
+
+    try {
+      const res = await jsonFetch('/api/remote/claim', { sid, token });
+      const data = await res.json();
+
+      if (res.ok && data.code === 0) {
+        const newControllerId = data.data.controllerId;
+        setControllerId(newControllerId);
+        setStatus('ready');
+
+        saveSessionToLocal({
+          sid,
+          token,
+          controllerId: newControllerId,
+        });
+
+        // eslint-disable-next-line no-console
+        console.log('重新连接成功');
+      } else {
+        throw new Error(data.message || '重连失败');
+      }
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('重新连接失败:', error);
+      setStatus('error');
+      clearLocalSession();
+    }
+  }, [sid, token, saveSessionToLocal, clearLocalSession]);
+
+  // 设置全局引用避免循环依赖
+  React.useEffect(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (window as any).attemptReconnectionRef = attemptReconnection;
+    return () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      delete (window as any).attemptReconnectionRef;
+    };
+  }, [attemptReconnection]);
 
   React.useEffect(() => {
     let mounted = true;
@@ -168,6 +233,7 @@ export default function ControllerPage({
           controllerId: newControllerId,
         });
       } catch (e) {
+        // eslint-disable-next-line no-console
         console.error('Claim failed:', e);
         setStatus('error');
         // 清除本地会话
@@ -213,11 +279,24 @@ export default function ControllerPage({
                   JSON.stringify(session)
                 );
               } catch (error) {
+                // eslint-disable-next-line no-console
                 console.warn('更新本地会话时间失败:', error);
               }
             }
+          } else if (
+            data.code === 409 &&
+            data.message === 'session mismatch, need reconnection'
+          ) {
+            // 检测到session不匹配，需要重新连接
+            // eslint-disable-next-line no-console
+            console.log('心跳检测到session不匹配，执行重连');
+            heartbeatCount = 0; // 重置计数，因为这是预期的状态
+            clearInterval(timer);
+            attemptReconnection();
+            return;
           } else {
             heartbeatCount++;
+            // eslint-disable-next-line no-console
             console.warn(
               `心跳失败 ${heartbeatCount}/${maxFailures}:`,
               data.message
@@ -225,6 +304,7 @@ export default function ControllerPage({
           }
         } else {
           heartbeatCount++;
+          // eslint-disable-next-line no-console
           console.warn(
             `心跳HTTP错误 ${heartbeatCount}/${maxFailures}:`,
             res.status
@@ -233,30 +313,42 @@ export default function ControllerPage({
 
         // 如果连续失败超过最大次数，尝试重新claim
         if (heartbeatCount >= maxFailures) {
+          // eslint-disable-next-line no-console
           console.error('心跳连续失败，尝试重新claim');
           clearInterval(timer);
           setStatus('error');
           // 触发重新claim
           setControllerId(null);
+          // 延迟重连，避免立即冲突
+          setTimeout(() => {
+            attemptReconnection();
+          }, 2000);
         }
       } catch (error) {
         heartbeatCount++;
+        // eslint-disable-next-line no-console
         console.error(`心跳异常 ${heartbeatCount}/${maxFailures}:`, error);
 
         if (heartbeatCount >= maxFailures) {
+          // eslint-disable-next-line no-console
           console.error('心跳连续异常，尝试重新claim');
           clearInterval(timer);
           setStatus('error');
           setControllerId(null);
+          // 延迟重连
+          setTimeout(() => {
+            attemptReconnection();
+          }, 2000);
         }
       }
     }, 10000); // 减少心跳间隔到10秒
 
     return () => clearInterval(timer);
-  }, [controllerId, sid, token]);
+  }, [controllerId, sid, token, attemptReconnection]);
 
   const send = async (message: unknown) => {
     if (!sid || !token || !controllerId) {
+      // eslint-disable-next-line no-console
       console.warn('send 函数缺少必要参数:', {
         sid: !!sid,
         token: !!token,
@@ -272,6 +364,7 @@ export default function ControllerPage({
         message,
       });
     } catch (error) {
+      // eslint-disable-next-line no-console
       console.warn('发送远程控制消息失败:', error);
     }
   };
@@ -331,22 +424,41 @@ export default function ControllerPage({
             const episodeIndex = msg.payload?.episodeIndex;
             const totalEpisodes = msg.payload?.totalEpisodes;
             const cover = msg.payload?.cover;
-            if (title || episodeIndex || totalEpisodes || cover) {
-              setMeta({ title, episodeIndex, totalEpisodes, cover });
+            const currentSource = msg.payload?.currentSource;
+            const currentId = msg.payload?.currentId;
+            if (
+              title ||
+              episodeIndex ||
+              totalEpisodes ||
+              cover ||
+              currentSource ||
+              currentId
+            ) {
+              setMeta({
+                title,
+                episodeIndex,
+                totalEpisodes,
+                cover,
+                currentSource,
+                currentId,
+              });
             }
           }
         } catch (parseError) {
+          // eslint-disable-next-line no-console
           console.warn('解析SSE消息失败:', parseError);
         }
       };
 
       const onError = (error: Event) => {
+        // eslint-disable-next-line no-console
         console.warn('SSE连接错误:', error);
       };
 
       es.onmessage = onMsg;
       es.onerror = onError;
     } catch (sseError) {
+      // eslint-disable-next-line no-console
       console.warn('创建SSE连接失败:', sseError);
     }
 
@@ -355,6 +467,7 @@ export default function ControllerPage({
         try {
           es.close();
         } catch (closeError) {
+          // eslint-disable-next-line no-console
           console.warn('关闭SSE连接失败:', closeError);
         }
       }
@@ -448,6 +561,7 @@ export default function ControllerPage({
       });
       setShowEpisodeSelector(false);
     } catch (error) {
+      // eslint-disable-next-line no-console
       console.warn('发送换源命令失败:', error);
     }
   };
@@ -464,11 +578,20 @@ export default function ControllerPage({
             onClick={() => {
               setStatus('idle');
               setControllerId(null);
+              // 延迟重连，避免立即冲突
+              setTimeout(() => {
+                attemptReconnection();
+              }, 1000);
             }}
             className='px-3 py-1 text-sm bg-red-500 text-white rounded hover:bg-red-600 transition-colors'
           >
             重连
           </button>
+        )}
+        {status === 'reconnecting' && (
+          <div className='px-3 py-1 text-sm bg-yellow-500 text-white rounded'>
+            重连中...
+          </div>
         )}
         {status === 'ready' && localSession && (
           <div className='text-xs opacity-60'>
@@ -693,6 +816,7 @@ export default function ControllerPage({
                         payload: { action: 'previous' },
                       });
                     } catch (error) {
+                      // eslint-disable-next-line no-console
                       console.warn('发送上一集命令失败:', error);
                     }
                   }}
@@ -701,9 +825,14 @@ export default function ControllerPage({
                 </button>
                 <button
                   className='h-11 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 transition-colors'
-                  onClick={() => setShowEpisodeSelector(true)}
+                  onClick={() => {
+                    if (meta.title) {
+                      fetchAvailableSources(meta.title);
+                      setShowEpisodeSelector(true);
+                    }
+                  }}
                 >
-                  选集
+                  选集/换源
                 </button>
                 <button
                   className='h-11 rounded-lg bg-blue-500 text-white font-medium hover:bg-blue-600 transition-colors'
@@ -711,6 +840,7 @@ export default function ControllerPage({
                     try {
                       send({ type: 'episode', payload: { action: 'next' } });
                     } catch (error) {
+                      // eslint-disable-next-line no-console
                       console.warn('发送下一集命令失败:', error);
                     }
                   }}
@@ -727,21 +857,6 @@ export default function ControllerPage({
               )}
             </>
           )}
-
-          {/* Source switching control - always show on play page */}
-          <div className='flex justify-center'>
-            <button
-              className='h-11 px-6 rounded-lg bg-green-500 text-white font-medium hover:bg-green-600 transition-colors'
-              onClick={() => {
-                if (meta.title) {
-                  fetchAvailableSources(meta.title);
-                  setShowEpisodeSelector(true);
-                }
-              }}
-            >
-              换源
-            </button>
-          </div>
 
           {/* Main playback controls */}
           <div className='grid grid-cols-2 gap-3'>
@@ -796,6 +911,7 @@ export default function ControllerPage({
                     payload: { action: 'enterWebFullscreen' },
                   });
                 } catch (error) {
+                  // eslint-disable-next-line no-console
                   console.warn('发送网页全屏命令失败:', error);
                 }
               }}
@@ -811,6 +927,7 @@ export default function ControllerPage({
                     payload: { action: 'exitWebFullscreen' },
                   });
                 } catch (error) {
+                  // eslint-disable-next-line no-console
                   console.warn('发送退出网页全屏命令失败:', error);
                 }
               }}
@@ -849,9 +966,11 @@ export default function ControllerPage({
               value={meta.episodeIndex || 1}
               onChange={(episodeNumber) => {
                 try {
+                  // eslint-disable-next-line no-console
                   console.log('遥控器选集:', { episodeNumber, meta: meta });
                   // EpisodeSelector 已经传递了 0-based index，不需要再减1
                   const episode = episodeNumber;
+                  // eslint-disable-next-line no-console
                   console.log('发送选集命令:', { episode, episodeNumber });
                   send({
                     type: 'episode',
@@ -859,6 +978,7 @@ export default function ControllerPage({
                   });
                   setShowEpisodeSelector(false);
                 } catch (error) {
+                  // eslint-disable-next-line no-console
                   console.warn('发送选集命令失败:', error);
                 }
               }}

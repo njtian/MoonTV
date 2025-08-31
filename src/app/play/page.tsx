@@ -212,6 +212,8 @@ function PlayPageClient() {
     episodeIndex: number;
     totalEpisodes: number;
     cover: string;
+    currentSource?: string;
+    currentId?: string;
   } | null>(null);
 
   // -----------------------------------------------------------------------------
@@ -1066,6 +1068,8 @@ function PlayPageClient() {
             episodeIndex: currentEpisodeIndexRef.current + 1,
             totalEpisodes: detailRef.current?.episodes?.length || 1,
             cover: processImageUrl(videoCoverRef.current || ''),
+            currentSource: currentSourceRef.current,
+            currentId: currentIdRef.current,
           };
 
           const lastStatus = lastRemoteStatusRef.current;
@@ -1077,7 +1081,9 @@ function PlayPageClient() {
             lastStatus.title !== currentStatus.title ||
             lastStatus.episodeIndex !== currentStatus.episodeIndex ||
             lastStatus.totalEpisodes !== currentStatus.totalEpisodes ||
-            lastStatus.cover !== currentStatus.cover;
+            lastStatus.cover !== currentStatus.cover ||
+            lastStatus.currentSource !== currentStatus.currentSource ||
+            lastStatus.currentId !== currentStatus.currentId;
 
           // 只有在状态发生变化时才发送
           if (hasChanged) {

@@ -2,14 +2,15 @@
 
 import type { Metadata, Viewport } from 'next';
 import { Inter } from 'next/font/google';
+import React from 'react';
 
 import './globals.css';
 import 'sweetalert2/dist/sweetalert2.min.css';
 
 import { getConfig } from '@/lib/config';
-import RuntimeConfig from '@/lib/runtime';
 
 import { GlobalErrorIndicator } from '../components/GlobalErrorIndicator';
+import RemoteControlProvider from '../components/RemoteControlProvider';
 import { SiteProvider } from '../components/SiteProvider';
 import { ThemeProvider } from '../components/ThemeProvider';
 
@@ -38,11 +39,7 @@ export const viewport: Viewport = {
   viewportFit: 'cover',
 };
 
-export default async function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default async function RootLayout({ children }: { children: any }) {
   let siteName = process.env.SITE_NAME || 'MoonTV';
   let announcement =
     process.env.ANNOUNCEMENT ||
@@ -52,12 +49,11 @@ export default async function RootLayout({
   let doubanProxy = process.env.NEXT_PUBLIC_DOUBAN_PROXY || '';
   let disableYellowFilter =
     process.env.NEXT_PUBLIC_DISABLE_YELLOW_FILTER === 'true';
-  let customCategories =
-    (RuntimeConfig as any).custom_category?.map((category: any) => ({
-      name: 'name' in category ? category.name : '',
-      type: category.type,
-      query: category.query,
-    })) || ([] as Array<{ name: string; type: 'movie' | 'tv'; query: string }>);
+  let customCategories: Array<{
+    name: string;
+    type: 'movie' | 'tv';
+    query: string;
+  }> = [];
   if (
     process.env.NEXT_PUBLIC_STORAGE_TYPE !== 'd1' &&
     process.env.NEXT_PUBLIC_STORAGE_TYPE !== 'upstash'
@@ -70,8 +66,8 @@ export default async function RootLayout({
     doubanProxy = config.SiteConfig.DoubanProxy;
     disableYellowFilter = config.SiteConfig.DisableYellowFilter;
     customCategories = config.CustomCategories.filter(
-      (category) => !category.disabled
-    ).map((category) => ({
+      (category: any) => !category.disabled
+    ).map((category: any) => ({
       name: category.name || '',
       type: category.type,
       query: category.query,
@@ -81,6 +77,7 @@ export default async function RootLayout({
   // 将运行时配置注入到全局 window 对象，供客户端在运行时读取
   const runtimeConfig = {
     STORAGE_TYPE: process.env.NEXT_PUBLIC_STORAGE_TYPE || 'localstorage',
+    ENABLE_REMOTE: process.env.NEXT_PUBLIC_ENABLE_REMOTE === 'true',
     ENABLE_REGISTER: enableRegister,
     IMAGE_PROXY: imageProxy,
     DOUBAN_PROXY: doubanProxy,
@@ -115,6 +112,9 @@ export default async function RootLayout({
           <SiteProvider siteName={siteName} announcement={announcement}>
             {children}
             <GlobalErrorIndicator />
+            {(runtimeConfig.STORAGE_TYPE === 'redis' ||
+              runtimeConfig.STORAGE_TYPE === 'upstash') &&
+              runtimeConfig.ENABLE_REMOTE && <RemoteControlProvider />}
           </SiteProvider>
         </ThemeProvider>
       </body>

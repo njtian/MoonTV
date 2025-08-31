@@ -16,7 +16,7 @@ export function SiteProvider({
   siteName,
   announcement,
 }: {
-  children: ReactNode;
+  children?: ReactNode;
   siteName: string;
   announcement?: string;
 }) {

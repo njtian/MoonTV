@@ -52,6 +52,23 @@ function PlayPageClient() {
   // 收藏状态
   const [favorited, setFavorited] = useState(false);
 
+  // 遥控器提示状态
+  const [remoteHint, setRemoteHint] = useState<{
+    text: string;
+    visible: boolean;
+  } | null>(null);
+  const remoteHintTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const showRemoteHint = (text: string) => {
+    if (!text) return;
+    setRemoteHint({ text, visible: true });
+    if (remoteHintTimerRef.current) {
+      clearTimeout(remoteHintTimerRef.current);
+    }
+    remoteHintTimerRef.current = setTimeout(() => {
+      setRemoteHint((h) => (h ? { ...h, visible: false } : h));
+    }, 1200);
+  };
+
   // 跳过片头片尾配置
   const [skipConfig, setSkipConfig] = useState<{
     enable: boolean;
@@ -901,24 +918,145 @@ function PlayPageClient() {
     }
   };
 
-  // 通过页面重载实现换源
-  const handleSourceChangeWithReload = (payload: {
+  // 遥控器切换源处理（保持播放进度和剧集状态）
+  const handleRemoteSourceChange = async (payload: {
     source: string;
     id: string;
     title: string;
     year: string;
     stype: string;
+    source_name?: string; // 源的中文名称
+    newDetail?: {
+      title: string;
+      year: string;
+      poster?: string;
+      episodes?: Array<{
+        title: string;
+        url: string;
+      }>;
+      type_name?: string;
+    };
   }) => {
-    // 构建新的播放URL
-    const newUrl = new URL('/play', window.location.origin);
-    newUrl.searchParams.set('source', payload.source);
-    newUrl.searchParams.set('id', payload.id);
-    newUrl.searchParams.set('title', encodeURIComponent(payload.title));
-    newUrl.searchParams.set('year', payload.year);
-    newUrl.searchParams.set('stype', payload.stype);
+    try {
+      console.log('遥控器切换源:', payload);
 
-    // 使用router.push重新加载页面
-    router.push(newUrl.toString());
+      // 显示换源加载状态
+      setVideoLoadingStage('sourceChanging');
+      setIsVideoLoading(true);
+
+      // 记录当前播放进度（仅在同一集数切换时恢复）
+      const currentPlayTime = artPlayerRef.current?.currentTime || 0;
+      console.log('换源前当前播放时间:', currentPlayTime);
+
+      // 清除前一个历史记录
+      if (currentSourceRef.current && currentIdRef.current) {
+        try {
+          await deletePlayRecord(
+            currentSourceRef.current,
+            currentIdRef.current
+          );
+          console.log('已清除前一个播放记录');
+        } catch (err) {
+          console.error('清除播放记录失败:', err);
+        }
+      }
+
+      // 清除并设置下一个跳过片头片尾配置
+      if (currentSourceRef.current && currentIdRef.current) {
+        try {
+          await deleteSkipConfig(
+            currentSourceRef.current,
+            currentIdRef.current
+          );
+          await saveSkipConfig(
+            payload.source,
+            payload.id,
+            skipConfigRef.current
+          );
+        } catch (err) {
+          console.error('清除跳过片头片尾配置失败:', err);
+        }
+      }
+
+      // 遥控器切换源时，availableSources可能还未初始化
+      // 直接使用payload中的信息，让新页面重新获取源信息
+      console.log('使用遥控器payload信息进行换源:', {
+        source: payload.source,
+        id: payload.id,
+        title: payload.title,
+        year: payload.year,
+        stype: payload.stype,
+        source_name: payload.source_name,
+      });
+
+      // 尝试跳转到当前正在播放的集数
+      // 优先使用 ref 中的值，因为它可能更准确
+      let targetIndex = currentEpisodeIndexRef.current || currentEpisodeIndex;
+
+      // 调试信息：检查当前状态
+      console.log('遥控器切换源 - 当前状态:', {
+        currentEpisodeIndex,
+        currentEpisodeIndexRef: currentEpisodeIndexRef.current,
+        targetIndex,
+        detail: detail,
+        payloadNewDetail: payload.newDetail,
+        artPlayerCurrentTime: artPlayerRef.current?.currentTime,
+      });
+
+      // 如果当前集数超出新源的范围，则跳转到第一集
+      if (
+        payload.newDetail?.episodes &&
+        targetIndex >= payload.newDetail.episodes.length
+      ) {
+        targetIndex = 0;
+      }
+
+      // 如果仍然是同一集数且播放进度有效，则在播放器就绪后恢复到原始进度
+      if (targetIndex !== currentEpisodeIndexRef.current) {
+        resumeTimeRef.current = 0;
+      } else if (
+        (!resumeTimeRef.current || resumeTimeRef.current === 0) &&
+        currentPlayTime > 1
+      ) {
+        resumeTimeRef.current = currentPlayTime;
+      }
+
+      // 更新页面状态（提供即时反馈）
+      setVideoTitle(payload.newDetail?.title || payload.title);
+      setVideoYear(payload.newDetail?.year || payload.year);
+      setVideoCover(payload.newDetail?.poster || '');
+      setCurrentSource(payload.source);
+      setCurrentId(payload.id);
+      // 构造符合 SearchResult 类型的对象
+      if (payload.newDetail) {
+        const searchResult: SearchResult = {
+          id: payload.id,
+          title: payload.newDetail.title,
+          poster: payload.newDetail.poster || '',
+          episodes: payload.newDetail.episodes?.map((ep) => ep.url) || [],
+          source: payload.source,
+          source_name: payload.source_name || payload.source, // 优先使用传入的source_name，否则fallback到source
+          year: payload.newDetail.year,
+          type_name: payload.newDetail.type_name,
+        };
+        setDetail(searchResult);
+      }
+      setCurrentEpisodeIndex(targetIndex);
+
+      // 更新URL参数（不刷新页面）
+      const newUrl = new URL(window.location.href);
+      newUrl.searchParams.set('source', payload.source);
+      newUrl.searchParams.set('id', payload.id);
+      newUrl.searchParams.set('title', encodeURIComponent(payload.title));
+      newUrl.searchParams.set('year', payload.year);
+      newUrl.searchParams.set('stype', payload.stype);
+      window.history.replaceState({}, '', newUrl.toString());
+    } catch (err) {
+      console.error('遥控器切换源失败:', err);
+      // 隐藏换源加载状态
+      setIsVideoLoading(false);
+      setError(err instanceof Error ? err.message : '遥控器切换源失败');
+    }
   };
 
   useEffect(() => {
@@ -933,18 +1071,34 @@ function PlayPageClient() {
         const payload = msg.payload || {};
         if (type === 'playback') {
           const action = payload.action;
-          if (action === 'play') artPlayerRef.current.play();
-          if (action === 'pause') artPlayerRef.current.pause();
+          if (action === 'play') {
+            artPlayerRef.current.play();
+            showRemoteHint('▶ 播放');
+          }
+          if (action === 'pause') {
+            artPlayerRef.current.pause();
+            showRemoteHint('⏸ 暂停');
+          }
           if (action === 'seek') {
             const value = Number(payload.value) || 0;
             const t = (artPlayerRef.current.currentTime || 0) + value;
             artPlayerRef.current.currentTime = Math.max(0, t);
+            showRemoteHint(
+              `${value >= 0 ? '⏩ 快进' : '⏪ 快退'} ${Math.abs(value)}s`
+            );
           }
           if (action === 'seekTo') {
             const seconds = Number(payload.value);
             const dur = Number(artPlayerRef.current.duration) || 0;
             if (!Number.isNaN(seconds) && seconds >= 0 && dur > 0) {
               artPlayerRef.current.currentTime = Math.min(dur - 0.5, seconds);
+              const mm = Math.floor(seconds / 60)
+                .toString()
+                .padStart(2, '0');
+              const ss = Math.floor(seconds % 60)
+                .toString()
+                .padStart(2, '0');
+              showRemoteHint(`🎯 跳转到 ${mm}:${ss}`);
             }
           }
           if (action === 'enterWebFullscreen') {
@@ -952,6 +1106,7 @@ function PlayPageClient() {
               if (artPlayerRef.current && !artPlayerRef.current.fullscreenWeb) {
                 artPlayerRef.current.fullscreenWeb = true;
               }
+              showRemoteHint('⛶ 网页全屏');
             } catch (error) {
               console.warn('进入网页全屏失败:', error);
             }
@@ -961,6 +1116,7 @@ function PlayPageClient() {
               if (artPlayerRef.current && artPlayerRef.current.fullscreenWeb) {
                 artPlayerRef.current.fullscreenWeb = false;
               }
+              showRemoteHint('🗗 退出网页全屏');
             } catch (error) {
               console.warn('退出网页全屏失败:', error);
             }
@@ -973,9 +1129,15 @@ function PlayPageClient() {
               1,
               Math.max(0, payload.level)
             );
+            showRemoteHint(
+              `🔊 音量 ${(
+                Math.min(1, Math.max(0, Number(payload.level))) * 100
+              ).toFixed(0)}%`
+            );
           }
           if (typeof payload.muted === 'boolean') {
             artPlayerRef.current.muted = payload.muted;
+            showRemoteHint(payload.muted ? '🔇 静音' : '🔈 取消静音');
           }
           return;
         }
@@ -989,14 +1151,17 @@ function PlayPageClient() {
           if (action === 'previous') {
             console.log('执行上一集');
             handlePreviousEpisodeRef.current?.();
+            showRemoteHint('⏮ 上一集');
           }
           if (action === 'next') {
             console.log('执行下一集');
             handleNextEpisodeRef.current?.();
+            showRemoteHint('⏭ 下一集');
           }
           if (action === 'select' && typeof payload.episode === 'number') {
             console.log('执行选集:', payload.episode);
             handleEpisodeChangeRef.current?.(payload.episode);
+            showRemoteHint(`📺 选中 第 ${Number(payload.episode)} 集`);
           }
           return;
         }
@@ -1010,10 +1175,12 @@ function PlayPageClient() {
             title: payload.title,
             year: payload.year,
             stype: payload.stype,
+            newDetail: payload.newDetail,
           });
           if (action === 'change' && payload.source && payload.id) {
             console.log('执行换源并重新加载页面:', payload);
-            handleSourceChangeWithReload(payload);
+            handleRemoteSourceChange(payload);
+            showRemoteHint('🔄 切换播放源');
           }
           return;
         }
@@ -1037,12 +1204,28 @@ function PlayPageClient() {
             );
           if (key === 'enter') artPlayerRef.current.toggle();
           if (key === 'back') window.history.back();
+          const keyName =
+            key === 'left'
+              ? '左'
+              : key === 'right'
+              ? '右'
+              : key === 'up'
+              ? '上'
+              : key === 'down'
+              ? '下'
+              : key === 'enter'
+              ? '确认'
+              : key === 'back'
+              ? '返回'
+              : String(key);
+          showRemoteHint(`🎛 遥控：${keyName}`);
           return;
         }
         if (type === 'system') {
           const action = payload.action;
           if (action === 'reload') {
             console.log('收到刷新命令，正在刷新页面...');
+            showRemoteHint('🔄 正在刷新');
             window.location.reload();
           }
           return;
@@ -1845,6 +2028,9 @@ function PlayPageClient() {
       if (saveIntervalRef.current) {
         clearInterval(saveIntervalRef.current);
       }
+      if (remoteHintTimerRef.current) {
+        clearTimeout(remoteHintTimerRef.current);
+      }
     };
   }, []);
 
@@ -2083,6 +2269,13 @@ function PlayPageClient() {
                   ref={artRef}
                   className='bg-black w-full h-full rounded-xl overflow-hidden shadow-lg'
                 ></div>
+
+                {/* 遥控器提示气泡 */}
+                {remoteHint?.visible && (
+                  <div className='absolute top-3 right-3 z-[600] px-3 py-1.5 rounded-md bg-black/70 text-white text-sm shadow-lg backdrop-blur-sm border border-white/10'>
+                    {remoteHint.text}
+                  </div>
+                )}
 
                 {/* 换源加载蒙层 */}
                 {isVideoLoading && (

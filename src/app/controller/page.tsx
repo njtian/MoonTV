@@ -405,7 +405,7 @@ export default function ControllerPage({
       );
 
       if (sourceInfo) {
-        // 发送换源命令，包含完整参数
+        // 发送换源命令，包含完整的源信息
         send({
           type: 'source',
           payload: {
@@ -415,6 +415,14 @@ export default function ControllerPage({
             title: sourceInfo.title,
             year: sourceInfo.year,
             stype: sourceInfo.episodes.length > 1 ? 'tv' : 'movie',
+            source_name: sourceInfo.source_name, // 添加源的中文名称
+            newDetail: {
+              title: sourceInfo.title,
+              year: sourceInfo.year,
+              poster: sourceInfo.poster,
+              episodes: sourceInfo.episodes,
+              type_name: sourceInfo.type_name,
+            },
           },
         });
       } else {

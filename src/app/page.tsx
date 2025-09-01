@@ -2,7 +2,7 @@
 
 'use client';
 
-import { ChevronRight } from 'lucide-react';
+import { ChevronRight, Smartphone } from 'lucide-react';
 import Link from 'next/link';
 import { Suspense, useEffect, useState } from 'react';
 
@@ -159,7 +159,7 @@ function HomeClient() {
     <PageLayout>
       <div className='px-2 sm:px-10 py-4 sm:py-8 overflow-visible'>
         {/* 顶部 Tab 切换 */}
-        <div className='mb-8 flex justify-center'>
+        <div className='mb-8 flex justify-center items-center gap-4'>
           <CapsuleSwitch
             options={[
               { label: '首页', value: 'home' },
@@ -168,6 +168,16 @@ function HomeClient() {
             active={activeTab}
             onChange={(value) => setActiveTab(value as 'home' | 'favorites')}
           />
+
+          {/* 遥控器快速入口 */}
+          <Link
+            href='/controller'
+            className='inline-flex items-center gap-2 rounded-lg bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 px-3 py-2 text-sm text-gray-700 dark:text-gray-300 transition-colors duration-200'
+            title='遥控器模式'
+          >
+            <Smartphone className='w-4 h-4' />
+            <span className='hidden sm:inline'>遥控器</span>
+          </Link>
         </div>
 
         <div className='max-w-[95%] mx-auto'>

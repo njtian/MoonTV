@@ -901,6 +901,26 @@ function PlayPageClient() {
     }
   };
 
+  // 通过页面重载实现换源
+  const handleSourceChangeWithReload = (payload: {
+    source: string;
+    id: string;
+    title: string;
+    year: string;
+    stype: string;
+  }) => {
+    // 构建新的播放URL
+    const newUrl = new URL('/play', window.location.origin);
+    newUrl.searchParams.set('source', payload.source);
+    newUrl.searchParams.set('id', payload.id);
+    newUrl.searchParams.set('title', encodeURIComponent(payload.title));
+    newUrl.searchParams.set('year', payload.year);
+    newUrl.searchParams.set('stype', payload.stype);
+
+    // 使用router.push重新加载页面
+    router.push(newUrl.toString());
+  };
+
   useEffect(() => {
     document.addEventListener('keydown', handleKeyboardShortcuts);
     // Remote control event listener
@@ -987,10 +1007,13 @@ function PlayPageClient() {
             action,
             source: payload.source,
             id: payload.id,
+            title: payload.title,
+            year: payload.year,
+            stype: payload.stype,
           });
           if (action === 'change' && payload.source && payload.id) {
-            console.log('执行换源:', payload.source, payload.id);
-            handleSourceChange(payload.source, payload.id, payload.title || '');
+            console.log('执行换源并重新加载页面:', payload);
+            handleSourceChangeWithReload(payload);
           }
           return;
         }
@@ -1073,7 +1096,7 @@ function PlayPageClient() {
           };
 
           const lastStatus = lastRemoteStatusRef.current;
-          const hasChanged =
+          const _hasChanged =
             !lastStatus ||
             lastStatus.duration !== currentStatus.duration ||
             lastStatus.currentTime !== currentStatus.currentTime ||
@@ -1085,28 +1108,26 @@ function PlayPageClient() {
             lastStatus.currentSource !== currentStatus.currentSource ||
             lastStatus.currentId !== currentStatus.currentId;
 
-          // 只有在状态发生变化时才发送
-          if (hasChanged) {
-            await fetch('/api/remote/status', {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({
-                sid,
-                token,
-                message: {
-                  type: 'status',
-                  payload: {
-                    page: 'play' as const,
-                    pageTitle: '播放页面',
-                    ...currentStatus,
-                  },
+          // 统一发送状态消息，包含完整状态信息
+          await fetch('/api/remote/status', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              sid,
+              token,
+              message: {
+                type: 'status',
+                payload: {
+                  page: 'play' as const,
+                  pageTitle: '播放页面',
+                  ...currentStatus,
                 },
-              }),
-            });
+              },
+            }),
+          });
 
-            // 更新缓存的状态
-            lastRemoteStatusRef.current = currentStatus;
-          }
+          // 更新缓存的状态
+          lastRemoteStatusRef.current = currentStatus;
         }
       } catch {
         // ignore error

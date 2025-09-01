@@ -1,4 +1,5 @@
 'use client';
+/* eslint-disable no-console */
 
 import Image from 'next/image';
 import React from 'react';
@@ -24,9 +25,8 @@ export default function ControllerPage({
 }) {
   const sid = searchParams?.sid || '';
   const token = searchParams?.t || '';
-  const [controllerId, setControllerId] = React.useState<string | null>(null);
   const [status, setStatus] = React.useState<
-    'idle' | 'claiming' | 'ready' | 'error' | 'reconnecting'
+    'idle' | 'checking' | 'waiting' | 'connected' | 'error'
   >('idle');
   const [pageStatus, setPageStatus] = React.useState<{
     page?: 'home' | 'play' | 'search' | 'detail' | 'other';
@@ -56,9 +56,61 @@ export default function ControllerPage({
   const [localSession, setLocalSession] = React.useState<{
     sid: string;
     token: string;
-    controllerId?: string;
     lastActive: number;
   } | null>(null);
+
+  // 保存会话到本地存储
+  const saveSessionToLocal = React.useCallback(
+    (sessionData: { sid: string; token: string }) => {
+      const session = {
+        ...sessionData,
+        lastActive: Date.now(),
+      };
+      setLocalSession(session);
+      localStorage.setItem('rc_controller_session', JSON.stringify(session));
+    },
+    []
+  );
+
+  // 检查订阅者状态
+  const checkSubscribers = React.useCallback(
+    async (sessionSid: string, sessionToken: string) => {
+      console.log('检查订阅者状态:', sessionSid);
+      setStatus('checking');
+
+      try {
+        const res = await fetch(
+          `/api/remote/subscribers?sid=${encodeURIComponent(
+            sessionSid
+          )}&token=${encodeURIComponent(sessionToken)}`
+        );
+        const data = await res.json();
+
+        if (res.ok && data.code === 0) {
+          if (data.data.hasSubscribers) {
+            setStatus('connected');
+            console.log('检测到订阅者，已连接');
+          } else {
+            setStatus('waiting');
+            console.log('未检测到订阅者，等待连接');
+          }
+
+          saveSessionToLocal({
+            sid: sessionSid,
+            token: sessionToken,
+          });
+        } else {
+          throw new Error(data.message || '检查订阅者状态失败');
+        }
+      } catch (error) {
+        console.error('检查订阅者状态失败:', error);
+        setStatus('error');
+        // 清除本地会话
+        localStorage.removeItem('rc_controller_session');
+      }
+    },
+    [saveSessionToLocal]
+  );
 
   // 初始化时尝试恢复本地会话
   React.useEffect(() => {
@@ -73,18 +125,19 @@ export default function ControllerPage({
           now - session.lastActive < 24 * 60 * 60 * 1000
         ) {
           setLocalSession(session);
-          // 如果有URL参数，优先使用URL参数
+          // 如果没有URL参数，使用本地会话进行检查
           if (!sid && !token) {
-            // 使用本地会话重定向
-            const url = new URL(window.location.href);
-            url.searchParams.set('sid', session.sid);
-            url.searchParams.set('t', session.token);
-            window.history.replaceState({}, '', url.toString());
-            // 重新加载页面以使用新的URL参数
-            window.location.reload();
+            // 直接使用本地会话，不进行重定向
+            console.log('使用本地会话恢复连接:', session.sid);
+            // 延迟一下再尝试检查，确保组件完全挂载
+            setTimeout(() => {
+              checkSubscribers(session.sid, session.token);
+            }, 100);
           } else {
-            // 有URL参数时，检查会话状态
-            checkSessionStatusRef.current(session.sid, session.token);
+            // 有URL参数时，使用URL参数进行检查
+            setTimeout(() => {
+              checkSubscribers(sid, token);
+            }, 100);
           }
         } else {
           // 会话过期，清除本地存储
@@ -95,272 +148,64 @@ export default function ControllerPage({
         console.warn('解析本地会话失败:', error);
         localStorage.removeItem('rc_controller_session');
       }
+    } else if (sid && token) {
+      // 没有本地会话但有URL参数，直接检查
+      setTimeout(() => {
+        checkSubscribers(sid, token);
+      }, 100);
     }
-  }, [sid, token]);
+  }, [sid, token, checkSubscribers]);
 
-  // 检查会话状态
-  const checkSessionStatus = React.useCallback(
-    async (sessionSid: string, sessionToken: string) => {
-      try {
-        const res = await fetch(
-          `/api/remote/status?sid=${sessionSid}&t=${sessionToken}`
-        );
-        if (res.ok) {
-          const data = await res.json();
-          if (data.code === 0) {
-            // eslint-disable-next-line no-console
-            console.log('会话状态检查成功:', data.data);
-            // 如果会话被锁定且不是当前控制器，尝试重新claim
-            if (
-              data.data.isLocked &&
-              data.data.lockOwner !== localSession?.controllerId
-            ) {
-              // eslint-disable-next-line no-console
-              console.log('检测到会话被其他控制器占用，尝试重新claim');
-              setControllerId(null);
-              setStatus('idle');
-              // 延迟重连，避免立即冲突
-              setTimeout(() => {
-                // 使用函数引用避免循环依赖
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                if ((window as any).attemptReconnectionRef) {
-                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                  (window as any).attemptReconnectionRef();
-                }
-              }, 1000);
-            }
-          }
-        }
-      } catch (error) {
-        // eslint-disable-next-line no-console
-        console.warn('检查会话状态失败:', error);
-      }
-    },
-    [localSession?.controllerId]
-  );
-
-  // 使用useRef避免循环依赖
-  const checkSessionStatusRef = React.useRef(checkSessionStatus);
+  // 定期检查订阅者状态
   React.useEffect(() => {
-    checkSessionStatusRef.current = checkSessionStatus;
-  }, [checkSessionStatus]);
-
-  // 保存会话到本地存储
-  const saveSessionToLocal = React.useCallback(
-    (sessionData: { sid: string; token: string; controllerId?: string }) => {
-      const session = {
-        ...sessionData,
-        lastActive: Date.now(),
-      };
-      setLocalSession(session);
-      localStorage.setItem('rc_controller_session', JSON.stringify(session));
-    },
-    []
-  );
-
-  // 清除本地会话
-  const clearLocalSession = React.useCallback(() => {
-    setLocalSession(null);
-    localStorage.removeItem('rc_controller_session');
-  }, []);
-
-  // 新增：智能重连函数
-  const attemptReconnection = React.useCallback(async () => {
-    if (!sid || !token) return;
-
-    // eslint-disable-next-line no-console
-    console.log('尝试重新连接...');
-    setStatus('reconnecting');
-
-    try {
-      const res = await jsonFetch('/api/remote/claim', { sid, token });
-      const data = await res.json();
-
-      if (res.ok && data.code === 0) {
-        const newControllerId = data.data.controllerId;
-        setControllerId(newControllerId);
-        setStatus('ready');
-
-        saveSessionToLocal({
-          sid,
-          token,
-          controllerId: newControllerId,
-        });
-
-        // eslint-disable-next-line no-console
-        console.log('重新连接成功');
-      } else {
-        throw new Error(data.message || '重连失败');
-      }
-    } catch (error) {
-      // eslint-disable-next-line no-console
-      console.error('重新连接失败:', error);
-      setStatus('error');
-      clearLocalSession();
-    }
-  }, [sid, token, saveSessionToLocal, clearLocalSession]);
-
-  // 设置全局引用避免循环依赖
-  React.useEffect(() => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (window as any).attemptReconnectionRef = attemptReconnection;
-    return () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      delete (window as any).attemptReconnectionRef;
-    };
-  }, [attemptReconnection]);
-
-  React.useEffect(() => {
-    let mounted = true;
-    const claim = async () => {
-      if (!sid || !token) return;
-      setStatus('claiming');
-      try {
-        const res = await jsonFetch('/api/remote/claim', { sid, token });
-        const data = await res.json();
-        if (!res.ok || data.code !== 0)
-          throw new Error(data.message || 'claim failed');
-        if (!mounted) return;
-
-        const newControllerId = data.data.controllerId;
-        setControllerId(newControllerId);
-        setStatus('ready');
-
-        // 保存会话到本地存储
-        saveSessionToLocal({
-          sid,
-          token,
-          controllerId: newControllerId,
-        });
-      } catch (e) {
-        // eslint-disable-next-line no-console
-        console.error('Claim failed:', e);
-        setStatus('error');
-        // 清除本地会话
-        clearLocalSession();
-      }
-    };
-    claim();
-    return () => {
-      mounted = false;
-    };
-  }, [sid, token, saveSessionToLocal, clearLocalSession]);
-
-  // Heartbeat - 优化心跳机制，减少间隔并添加错误处理
-  React.useEffect(() => {
-    if (!controllerId || !sid || !token) return;
-
-    let heartbeatCount = 0;
-    const maxFailures = 3;
+    if (!localSession?.sid || !localSession?.token) return;
 
     const timer = setInterval(async () => {
       try {
-        const res = await jsonFetch('/api/remote/claim', {
-          sid,
-          token,
-          controllerId,
-          heartbeat: true,
-        });
+        const res = await fetch(
+          `/api/remote/subscribers?sid=${encodeURIComponent(
+            localSession.sid
+          )}&token=${encodeURIComponent(localSession.token)}`
+        );
+        const data = await res.json();
 
-        if (res.ok) {
-          const data = await res.json();
-          if (data.code === 0) {
-            heartbeatCount = 0; // 重置失败计数
-            // 更新本地会话的最后活跃时间
-            const currentSession = localStorage.getItem(
-              'rc_controller_session'
-            );
-            if (currentSession) {
-              try {
-                const session = JSON.parse(currentSession);
-                session.lastActive = Date.now();
-                localStorage.setItem(
-                  'rc_controller_session',
-                  JSON.stringify(session)
-                );
-              } catch (error) {
-                // eslint-disable-next-line no-console
-                console.warn('更新本地会话时间失败:', error);
-              }
+        if (res.ok && data.code === 0) {
+          if (data.data.hasSubscribers) {
+            if (status !== 'connected') {
+              setStatus('connected');
+              console.log('检测到订阅者，状态更新为已连接');
             }
-          } else if (
-            data.code === 409 &&
-            data.message === 'session mismatch, need reconnection'
-          ) {
-            // 检测到session不匹配，需要重新连接
-            // eslint-disable-next-line no-console
-            console.log('心跳检测到session不匹配，执行重连');
-            heartbeatCount = 0; // 重置计数，因为这是预期的状态
-            clearInterval(timer);
-            attemptReconnection();
-            return;
           } else {
-            heartbeatCount++;
-            // eslint-disable-next-line no-console
-            console.warn(
-              `心跳失败 ${heartbeatCount}/${maxFailures}:`,
-              data.message
-            );
+            if (status !== 'waiting') {
+              setStatus('waiting');
+              console.log('未检测到订阅者，状态更新为等待连接');
+            }
           }
-        } else {
-          heartbeatCount++;
-          // eslint-disable-next-line no-console
-          console.warn(
-            `心跳HTTP错误 ${heartbeatCount}/${maxFailures}:`,
-            res.status
-          );
-        }
-
-        // 如果连续失败超过最大次数，尝试重新claim
-        if (heartbeatCount >= maxFailures) {
-          // eslint-disable-next-line no-console
-          console.error('心跳连续失败，尝试重新claim');
-          clearInterval(timer);
-          setStatus('error');
-          // 触发重新claim
-          setControllerId(null);
-          // 延迟重连，避免立即冲突
-          setTimeout(() => {
-            attemptReconnection();
-          }, 2000);
         }
       } catch (error) {
-        heartbeatCount++;
-        // eslint-disable-next-line no-console
-        console.error(`心跳异常 ${heartbeatCount}/${maxFailures}:`, error);
-
-        if (heartbeatCount >= maxFailures) {
-          // eslint-disable-next-line no-console
-          console.error('心跳连续异常，尝试重新claim');
-          clearInterval(timer);
-          setStatus('error');
-          setControllerId(null);
-          // 延迟重连
-          setTimeout(() => {
-            attemptReconnection();
-          }, 2000);
-        }
+        console.warn('检查订阅者状态失败:', error);
       }
-    }, 10000); // 减少心跳间隔到10秒
+    }, 5000); // 每5秒检查一次
 
     return () => clearInterval(timer);
-  }, [controllerId, sid, token, attemptReconnection]);
+  }, [localSession?.sid, localSession?.token, status]);
 
   const send = async (message: unknown) => {
-    if (!sid || !token || !controllerId) {
+    const currentSid = localSession?.sid || sid;
+    const currentToken = localSession?.token || token;
+
+    if (!currentSid || !currentToken) {
       // eslint-disable-next-line no-console
       console.warn('send 函数缺少必要参数:', {
-        sid: !!sid,
-        token: !!token,
-        controllerId: !!controllerId,
+        sid: !!currentSid,
+        token: !!currentToken,
       });
       return;
     }
     try {
       await jsonFetch('/api/remote/publish', {
-        sid,
-        token,
-        controllerId,
+        sid: currentSid,
+        token: currentToken,
         message,
       });
     } catch (error) {
@@ -389,12 +234,15 @@ export default function ControllerPage({
 
   // Subscribe SSE directly to receive status and other messages
   React.useEffect(() => {
-    if (!sid) return;
+    const currentSid = localSession?.sid || sid;
+    if (!currentSid) return;
 
     let es: EventSource | null = null;
 
     try {
-      es = new EventSource(`/api/remote/stream?sid=${encodeURIComponent(sid)}`);
+      es = new EventSource(
+        `/api/remote/stream?sid=${encodeURIComponent(currentSid)}`
+      );
 
       const onMsg = (ev: MessageEvent) => {
         try {
@@ -472,7 +320,7 @@ export default function ControllerPage({
         }
       }
     };
-  }, [sid, isSeeking]);
+  }, [localSession?.sid, sid, isSeeking]);
 
   // Remove window relay listener (we now consume SSE directly)
 
@@ -490,9 +338,9 @@ export default function ControllerPage({
   // Get display status text
   const getStatusText = () => {
     if (status === 'error') return '连接错误';
-    if (status === 'claiming') return '连接中...';
-    if (status === 'idle') return '未连接';
-    if (status === 'ready') {
+    if (status === 'checking') return '检查中...';
+    if (status === 'waiting') return '等待连接';
+    if (status === 'connected') {
       if (pageStatus.page === 'play') return '播放页面';
       if (pageStatus.page === 'home') return '首页';
       if (pageStatus.page === 'search') return '搜索页面';
@@ -500,6 +348,7 @@ export default function ControllerPage({
       if (pageStatus.page === 'other') return '其他页面';
       return '已连接';
     }
+    if (status === 'idle') return '未连接';
     return status;
   };
 
@@ -550,15 +399,35 @@ export default function ControllerPage({
   // 处理换源
   const handleSourceChange = (source: string, id: string, _title: string) => {
     try {
-      // 发送换源命令
-      send({
-        type: 'source',
-        payload: {
-          action: 'change',
-          source,
-          id,
-        },
-      });
+      // 从availableSources中获取完整的源信息
+      const sourceInfo = availableSources.find(
+        (s) => s.source === source && s.id === id
+      );
+
+      if (sourceInfo) {
+        // 发送换源命令，包含完整参数
+        send({
+          type: 'source',
+          payload: {
+            action: 'change',
+            source,
+            id,
+            title: sourceInfo.title,
+            year: sourceInfo.year,
+            stype: sourceInfo.episodes.length > 1 ? 'tv' : 'movie',
+          },
+        });
+      } else {
+        // 如果找不到源信息，使用原有逻辑
+        send({
+          type: 'source',
+          payload: {
+            action: 'change',
+            source,
+            id,
+          },
+        });
+      }
       setShowEpisodeSelector(false);
     } catch (error) {
       // eslint-disable-next-line no-console
@@ -577,10 +446,13 @@ export default function ControllerPage({
           <button
             onClick={() => {
               setStatus('idle');
-              setControllerId(null);
               // 延迟重连，避免立即冲突
               setTimeout(() => {
-                attemptReconnection();
+                if (localSession?.sid && localSession?.token) {
+                  checkSubscribers(localSession.sid, localSession.token);
+                } else if (sid && token) {
+                  checkSubscribers(sid, token);
+                }
               }, 1000);
             }}
             className='px-3 py-1 text-sm bg-red-500 text-white rounded hover:bg-red-600 transition-colors'
@@ -588,12 +460,7 @@ export default function ControllerPage({
             重连
           </button>
         )}
-        {status === 'reconnecting' && (
-          <div className='px-3 py-1 text-sm bg-yellow-500 text-white rounded'>
-            重连中...
-          </div>
-        )}
-        {status === 'ready' && localSession && (
+        {status === 'connected' && localSession && (
           <div className='text-xs opacity-60'>
             会话: {localSession.sid.slice(0, 8)}...
           </div>

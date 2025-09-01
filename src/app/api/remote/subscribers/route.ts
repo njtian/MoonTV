@@ -1,15 +1,9 @@
 /* eslint-disable no-console */
-import { get, publish } from '@/lib/remote/redis';
+import { hgetall } from '@/lib/remote/redis';
 import { isAllowedOrigin, isRemoteEnabled } from '@/lib/remote/security';
 import { verifyPairingToken } from '@/lib/remote/token';
 
 export const runtime = 'nodejs';
-
-type Body = {
-  sid?: string;
-  token?: string;
-  message?: unknown;
-};
 
 function json(data: unknown, init?: number | ResponseInit) {
   const body = JSON.stringify(data);
@@ -20,23 +14,7 @@ function json(data: unknown, init?: number | ResponseInit) {
   return new Response(body, { ...(initObj as ResponseInit), headers });
 }
 
-// 简单速率限制：每 sid 每秒最多 20 条
-async function isRateLimited(sid: string): Promise<boolean> {
-  try {
-    const key = `rl:${sid}:${Math.floor(Date.now() / 1000)}`;
-    // Use Lua ideally; here we accept slight race by publish path not critical.
-    // Reuse redis get/setex via fetch style not available; keep simple by allowing burst.
-    const current = await get(key);
-    const count = current ? parseInt(current, 10) : 0;
-    if (count >= 20) return true;
-    // setex via HTTP not added here to keep minimal; acceptable for MVP.
-    return false;
-  } catch {
-    return false;
-  }
-}
-
-export async function POST(request: Request) {
+export async function GET(request: Request) {
   try {
     if (!isRemoteEnabled()) {
       return json({ code: 400, message: 'Remote disabled' }, { status: 400 });
@@ -62,26 +40,48 @@ export async function POST(request: Request) {
         { status: 403 }
       );
     }
-    const { sid, token, message } = (await request.json()) as Body;
+
+    const { searchParams } = new URL(request.url);
+    const sid = searchParams.get('sid');
+    const token = searchParams.get('token');
+
     if (!sid || !token) {
       return json(
         { code: 400, message: 'sid and token required' },
         { status: 400 }
       );
     }
+
     const payload = await verifyPairingToken(token);
     if (!payload || payload.sid !== sid) {
       return json({ code: 401, message: 'invalid token' }, { status: 401 });
     }
 
-    if (await isRateLimited(sid)) {
-      return json({ code: 429, message: 'rate limited' }, { status: 429 });
+    // 检查会话是否存在
+    const session = await hgetall(`s:${sid}`);
+    if (!session || !session.ownerUserId) {
+      return json({ code: 404, message: 'session not found' }, { status: 404 });
     }
 
-    await publish(`ch:${sid}`, JSON.stringify({ ts: Date.now(), message }));
-    return json({ code: 0, message: 'ok' });
+    // 检查是否有订阅者（通过检查会话中是否有订阅者信息）
+    // 这里我们通过检查会话的lastActive时间来判断是否有活跃的订阅者
+    const hasSubscribers =
+      session.lastActive && Date.now() - parseInt(session.lastActive) < 10000; // 10秒内有活动
+
+    return json({
+      code: 0,
+      message: 'ok',
+      data: {
+        hasSubscribers,
+        session: {
+          ownerUserId: session.ownerUserId,
+          createdAt: session.createdAt,
+          lastActive: session.lastActive,
+        },
+      },
+    });
   } catch (err) {
-    console.error('Publish error', err);
+    console.error('Subscribers check error', err);
     return json(
       { code: 500, message: 'Internal Server Error' },
       { status: 500 }

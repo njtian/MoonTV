@@ -78,32 +78,23 @@ export function useRemoteStatus() {
           return;
         }
 
-        // 检测状态是否发生变化
+        // 统一发送状态消息，保持连接活跃
         const currentStatus = { page, pageTitle };
-        const lastStatus = lastStatusRef.current;
-        const hasChanged =
-          !lastStatus ||
-          lastStatus.page !== currentStatus.page ||
-          lastStatus.pageTitle !== currentStatus.pageTitle;
+        await fetch('/api/remote/status', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            sid,
+            token,
+            message: {
+              type: 'status',
+              payload: currentStatus,
+            } as PageStatus,
+          }),
+        });
 
-        // 只有在状态发生变化时才发送
-        if (hasChanged) {
-          await fetch('/api/remote/status', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({
-              sid,
-              token,
-              message: {
-                type: 'status',
-                payload: currentStatus,
-              } as PageStatus,
-            }),
-          });
-
-          // 更新缓存的状态
-          lastStatusRef.current = currentStatus;
-        }
+        // 更新缓存的状态
+        lastStatusRef.current = currentStatus;
       } catch {
         // Ignore errors
       }

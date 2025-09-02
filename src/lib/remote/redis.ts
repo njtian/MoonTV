@@ -156,6 +156,36 @@ export async function get(key: string): Promise<string | null> {
 }
 
 /**
+ * Scan Redis keys with pattern
+ */
+export async function scanKeys(pattern: string): Promise<string[]> {
+  const { kv, type } = getRedis();
+  const p = getKey(pattern);
+
+  if (type === 'upstash') {
+    // Upstash doesn't support SCAN, so we'll use a different approach
+    // For now, we'll return empty array and handle this differently
+    console.warn('Upstash does not support SCAN command');
+    return [];
+  } else {
+    await ensureConnected();
+    const keys: string[] = [];
+    let cursor = 0;
+
+    do {
+      const result = await (kv as any).scan(cursor, {
+        MATCH: p,
+        COUNT: 100,
+      });
+      cursor = result.cursor;
+      keys.push(...result.keys);
+    } while (cursor !== 0);
+
+    return keys;
+  }
+}
+
+/**
  * Subscribe to a Pub/Sub channel and receive messages.
  * Returns an unsubscribe function.
  */

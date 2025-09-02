@@ -38,6 +38,17 @@ export function generateControllerId(): string {
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+export async function hash(input: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(input);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = new Uint8Array(hashBuffer);
+  const hashHex = Array.from(hashArray)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+  return hashHex;
+}
+
 function base64UrlEncode(input: string): string {
   const enc = new TextEncoder().encode(input);
   let str = '';

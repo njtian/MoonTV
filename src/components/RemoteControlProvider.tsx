@@ -1,5 +1,6 @@
 'use client';
 
+/* eslint-disable no-console */
 import React from 'react';
 
 type SessionInfo = {
@@ -16,7 +17,9 @@ export default function RemoteControlProvider() {
   const sseRef = React.useRef<EventSource | null>(null);
 
   React.useEffect(() => {
-    // try resume from sessionStorage
+    console.log('RemoteControlProvider: 开始初始化，检查会话恢复');
+
+    // try resume from sessionStorage first
     const raw =
       typeof window !== 'undefined'
         ? window.sessionStorage.getItem('rc_session')
@@ -24,12 +27,128 @@ export default function RemoteControlProvider() {
     if (raw) {
       try {
         const s = JSON.parse(raw) as SessionInfo;
-        if (s && s.sid && s.token) setSession(s);
+        if (s && s.sid && s.token) {
+          console.log(
+            'RemoteControlProvider: 从sessionStorage恢复会话:',
+            s.sid
+          );
+          setSession(s);
+          return; // 如果本地有会话，直接使用，不进行服务器检查
+        }
       } catch {
         // ignore parse error
       }
     }
+
+    // 如果没有本地会话，尝试从服务器获取用户的最新会话
+    console.log(
+      'RemoteControlProvider: 没有本地会话，尝试从服务器获取用户会话'
+    );
+    loadUserSessions();
   }, []);
+
+  const loadUserSessions = async () => {
+    try {
+      console.log('RemoteControlProvider: 开始获取用户会话列表');
+      const res = await fetch('/api/remote/my-sessions');
+      if (!res.ok) {
+        console.log(
+          'RemoteControlProvider: 获取用户会话失败，状态码:',
+          res.status
+        );
+        return;
+      }
+
+      const data = await res.json();
+      console.log('RemoteControlProvider: 获取到用户会话数据:', data);
+
+      if (data.code === 0 && data.data.sessions.length > 0) {
+        // 选择最新的活跃会话
+        const latestSession = data.data.sessions[0];
+        console.log('RemoteControlProvider: 最新会话:', latestSession);
+
+        // 检查会话是否仍然有效（有lastActive且最近活跃）
+        const now = Date.now();
+        const isRecent =
+          latestSession.lastActive &&
+          now - latestSession.lastActive < 24 * 60 * 60 * 1000; // 24小时内活跃
+
+        console.log(
+          'RemoteControlProvider: 会话是否最近活跃:',
+          isRecent,
+          'lastActive:',
+          latestSession.lastActive
+        );
+
+        if (isRecent) {
+          // 为现有会话重新生成token
+          try {
+            console.log(
+              'RemoteControlProvider: 开始重新生成token for session:',
+              latestSession.sid
+            );
+            const tokenRes = await fetch(
+              '/api/remote/session/regenerate-token',
+              {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ sid: latestSession.sid }),
+              }
+            );
+
+            if (tokenRes.ok) {
+              const tokenData = await tokenRes.json();
+              console.log(
+                'RemoteControlProvider: token重新生成结果:',
+                tokenData
+              );
+
+              if (tokenData.code === 0) {
+                const sessionInfo: SessionInfo = {
+                  sid: tokenData.data.sid,
+                  token: tokenData.data.token,
+                  controllerUrl: tokenData.data.controllerUrl,
+                };
+                setSession(sessionInfo);
+
+                // 保存到sessionStorage
+                if (typeof window !== 'undefined') {
+                  window.sessionStorage.setItem(
+                    'rc_session',
+                    JSON.stringify(sessionInfo)
+                  );
+                }
+
+                console.log(
+                  'RemoteControlProvider: 自动恢复远程会话成功:',
+                  latestSession.sid
+                );
+                return;
+              }
+            } else {
+              console.log(
+                'RemoteControlProvider: token重新生成失败，状态码:',
+                tokenRes.status
+              );
+            }
+          } catch (tokenError) {
+            console.warn(
+              'RemoteControlProvider: 重新生成token时出错:',
+              tokenError
+            );
+          }
+        } else {
+          console.log(
+            'RemoteControlProvider: 会话不是最近活跃的，跳过自动恢复'
+          );
+        }
+      } else {
+        console.log('RemoteControlProvider: 没有找到用户会话');
+      }
+    } catch (error) {
+      console.warn('RemoteControlProvider: 获取用户会话时出错:', error);
+    }
+  };
 
   const createSession = async () => {
     try {

@@ -178,6 +178,15 @@ function PlayPageClient() {
     null
   );
 
+  // 遥控器换源指令状态
+  const [remoteSourceChangeCommand, setRemoteSourceChangeCommand] = useState<{
+    source: string;
+    id: string;
+    title: string;
+    year: string;
+    stype: string;
+  } | null>(null);
+
   // 优选和测速开关
   const [optimizationEnabled] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
@@ -918,144 +927,23 @@ function PlayPageClient() {
     }
   };
 
-  // 遥控器切换源处理（保持播放进度和剧集状态）
+  // 遥控器切换源处理（精简版本）
   const handleRemoteSourceChange = async (payload: {
     source: string;
     id: string;
     title: string;
     year: string;
     stype: string;
-    source_name?: string; // 源的中文名称
-    newDetail?: {
-      title: string;
-      year: string;
-      poster?: string;
-      episodes?: Array<{
-        title: string;
-        url: string;
-      }>;
-      type_name?: string;
-    };
   }) => {
     try {
-      console.log('遥控器切换源:', payload);
+      console.log('遥控器切换源指令:', payload);
 
-      // 显示换源加载状态
-      setVideoLoadingStage('sourceChanging');
-      setIsVideoLoading(true);
-
-      // 记录当前播放进度（仅在同一集数切换时恢复）
-      const currentPlayTime = artPlayerRef.current?.currentTime || 0;
-      console.log('换源前当前播放时间:', currentPlayTime);
-
-      // 清除前一个历史记录
-      if (currentSourceRef.current && currentIdRef.current) {
-        try {
-          await deletePlayRecord(
-            currentSourceRef.current,
-            currentIdRef.current
-          );
-          console.log('已清除前一个播放记录');
-        } catch (err) {
-          console.error('清除播放记录失败:', err);
-        }
-      }
-
-      // 清除并设置下一个跳过片头片尾配置
-      if (currentSourceRef.current && currentIdRef.current) {
-        try {
-          await deleteSkipConfig(
-            currentSourceRef.current,
-            currentIdRef.current
-          );
-          await saveSkipConfig(
-            payload.source,
-            payload.id,
-            skipConfigRef.current
-          );
-        } catch (err) {
-          console.error('清除跳过片头片尾配置失败:', err);
-        }
-      }
-
-      // 遥控器切换源时，availableSources可能还未初始化
-      // 直接使用payload中的信息，让新页面重新获取源信息
-      console.log('使用遥控器payload信息进行换源:', {
-        source: payload.source,
-        id: payload.id,
-        title: payload.title,
-        year: payload.year,
-        stype: payload.stype,
-        source_name: payload.source_name,
-      });
-
-      // 尝试跳转到当前正在播放的集数
-      // 优先使用 ref 中的值，因为它可能更准确
-      let targetIndex = currentEpisodeIndexRef.current || currentEpisodeIndex;
-
-      // 调试信息：检查当前状态
-      console.log('遥控器切换源 - 当前状态:', {
-        currentEpisodeIndex,
-        currentEpisodeIndexRef: currentEpisodeIndexRef.current,
-        targetIndex,
-        detail: detail,
-        payloadNewDetail: payload.newDetail,
-        artPlayerCurrentTime: artPlayerRef.current?.currentTime,
-      });
-
-      // 如果当前集数超出新源的范围，则跳转到第一集
-      if (
-        payload.newDetail?.episodes &&
-        targetIndex >= payload.newDetail.episodes.length
-      ) {
-        targetIndex = 0;
-      }
-
-      // 如果仍然是同一集数且播放进度有效，则在播放器就绪后恢复到原始进度
-      if (targetIndex !== currentEpisodeIndexRef.current) {
-        resumeTimeRef.current = 0;
-      } else if (
-        (!resumeTimeRef.current || resumeTimeRef.current === 0) &&
-        currentPlayTime > 1
-      ) {
-        resumeTimeRef.current = currentPlayTime;
-      }
-
-      // 更新页面状态（提供即时反馈）
-      setVideoTitle(payload.newDetail?.title || payload.title);
-      setVideoYear(payload.newDetail?.year || payload.year);
-      setVideoCover(payload.newDetail?.poster || '');
-      setCurrentSource(payload.source);
-      setCurrentId(payload.id);
-      // 构造符合 SearchResult 类型的对象
-      if (payload.newDetail) {
-        const searchResult: SearchResult = {
-          id: payload.id,
-          title: payload.newDetail.title,
-          poster: payload.newDetail.poster || '',
-          episodes: payload.newDetail.episodes?.map((ep) => ep.url) || [],
-          source: payload.source,
-          source_name: payload.source_name || payload.source, // 优先使用传入的source_name，否则fallback到source
-          year: payload.newDetail.year,
-          type_name: payload.newDetail.type_name,
-        };
-        setDetail(searchResult);
-      }
-      setCurrentEpisodeIndex(targetIndex);
-
-      // 更新URL参数（不刷新页面）
-      const newUrl = new URL(window.location.href);
-      newUrl.searchParams.set('source', payload.source);
-      newUrl.searchParams.set('id', payload.id);
-      newUrl.searchParams.set('title', encodeURIComponent(payload.title));
-      newUrl.searchParams.set('year', payload.year);
-      newUrl.searchParams.set('stype', payload.stype);
-      window.history.replaceState({}, '', newUrl.toString());
+      // 只设置换源指令状态，不执行换源逻辑
+      // 实际的换源逻辑将在 useEffect 中执行
+      setRemoteSourceChangeCommand(payload);
     } catch (err) {
-      console.error('遥控器切换源失败:', err);
-      // 隐藏换源加载状态
-      setIsVideoLoading(false);
-      setError(err instanceof Error ? err.message : '遥控器切换源失败');
+      console.error('设置遥控器换源指令失败:', err);
+      setError(err instanceof Error ? err.message : '设置遥控器换源指令失败');
     }
   };
 
@@ -1175,11 +1063,16 @@ function PlayPageClient() {
             title: payload.title,
             year: payload.year,
             stype: payload.stype,
-            newDetail: payload.newDetail,
           });
           if (action === 'change' && payload.source && payload.id) {
-            console.log('执行换源并重新加载页面:', payload);
-            handleRemoteSourceChange(payload);
+            console.log('执行换源:', payload);
+            handleRemoteSourceChange({
+              source: payload.source,
+              id: payload.id,
+              title: payload.title,
+              year: payload.year,
+              stype: payload.stype,
+            });
             showRemoteHint('🔄 切换播放源');
           }
           return;
@@ -2022,11 +1915,100 @@ function PlayPageClient() {
     }
   }, [Artplayer, Hls, videoUrl, loading, blockAdEnabled]);
 
+  // 监听遥控器换源指令并执行换源逻辑
+  useEffect(() => {
+    if (!remoteSourceChangeCommand) return;
+
+    const executeRemoteSourceChange = async () => {
+      try {
+        console.log('执行遥控器换源指令:', remoteSourceChangeCommand);
+
+        // 先获取可用的播放源信息
+        const fetchSourcesData = async (
+          query: string
+        ): Promise<SearchResult[]> => {
+          try {
+            const response = await fetch(
+              `/api/search?q=${encodeURIComponent(query.trim())}`
+            );
+            if (!response.ok) {
+              throw new Error('搜索失败');
+            }
+            const data = await response.json();
+
+            // 处理搜索结果，根据规则过滤
+            const results = data.results.filter(
+              (result: SearchResult) =>
+                result.title.replaceAll(' ', '').toLowerCase() ===
+                  query.replaceAll(' ', '').toLowerCase() &&
+                (remoteSourceChangeCommand.year
+                  ? result.year.toLowerCase() ===
+                    remoteSourceChangeCommand.year.toLowerCase()
+                  : true) &&
+                (remoteSourceChangeCommand.stype
+                  ? (remoteSourceChangeCommand.stype === 'tv' &&
+                      result.episodes.length > 1) ||
+                    (remoteSourceChangeCommand.stype === 'movie' &&
+                      result.episodes.length === 1)
+                  : true)
+            );
+
+            console.log('遥控器换源获取到的播放源:', results);
+            return results;
+          } catch (err) {
+            console.error('遥控器换源获取播放源失败:', err);
+            return [];
+          }
+        };
+
+        // 获取播放源信息
+        const searchQuery =
+          remoteSourceChangeCommand.title || videoTitleRef.current;
+        const sources = await fetchSourcesData(searchQuery);
+
+        if (sources.length === 0) {
+          throw new Error('未找到匹配的播放源');
+        }
+
+        // 验证目标播放源是否存在
+        const targetSource = sources.find(
+          (source) =>
+            source.source === remoteSourceChangeCommand.source &&
+            source.id === remoteSourceChangeCommand.id
+        );
+
+        if (!targetSource) {
+          throw new Error('未找到指定的播放源');
+        }
+
+        // 更新 availableSources 状态
+        setAvailableSources(sources);
+
+        // 在 useEffect 中，状态更新更可靠，直接调用换源
+        await handleSourceChange(
+          remoteSourceChangeCommand.source,
+          remoteSourceChangeCommand.id,
+          remoteSourceChangeCommand.title
+        );
+        console.log('遥控器换源完成');
+      } catch (err) {
+        console.error('执行遥控器换源指令失败:', err);
+        setError(err instanceof Error ? err.message : '执行遥控器换源指令失败');
+        setIsVideoLoading(false);
+      }
+    };
+
+    executeRemoteSourceChange();
+
+    // 清除换源指令，避免重复执行
+    setRemoteSourceChangeCommand(null);
+  }, [remoteSourceChangeCommand]);
+
   // 当组件卸载时清理定时器
   useEffect(() => {
     return () => {
       if (saveIntervalRef.current) {
-        clearInterval(saveIntervalRef.current);
+        clearTimeout(saveIntervalRef.current);
       }
       if (remoteHintTimerRef.current) {
         clearTimeout(remoteHintTimerRef.current);

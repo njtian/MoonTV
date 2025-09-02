@@ -9,6 +9,7 @@ import { createPortal } from 'react-dom';
 
 import { getAuthInfoFromBrowserCookie } from '@/lib/auth';
 import { checkForUpdates, CURRENT_VERSION, UpdateStatus } from '@/lib/version';
+import { RemoteRole, useRemoteRole } from '@/hooks/useRemoteRole';
 
 interface AuthInfo {
   username?: string;
@@ -41,6 +42,9 @@ export const UserMenu: React.FC = () => {
   // 版本检查相关状态
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [isChecking, setIsChecking] = useState(true);
+
+  // 遥控器角色管理
+  const { currentRole, changeRole, getRoleConfig } = useRemoteRole();
 
   // 确保组件已挂载
   useEffect(() => {
@@ -613,6 +617,52 @@ export const UserMenu: React.FC = () => {
               onChange={(e) => handleImageProxyUrlChange(e.target.value)}
               disabled={!enableImageProxy}
             />
+          </div>
+        </div>
+
+        {/* 分割线 */}
+        <div className='border-t border-gray-200 dark:border-gray-700'></div>
+
+        {/* 遥控器角色设置 */}
+        <div className='space-y-4'>
+          <div>
+            <h4 className='text-sm font-medium text-gray-700 dark:text-gray-300 mb-3'>
+              遥控器角色
+            </h4>
+            <p className='text-xs text-gray-500 dark:text-gray-400 mb-4'>
+              选择当前设备的遥控器功能角色
+            </p>
+
+            {/* 角色选择按钮组 */}
+            <div className='space-y-2'>
+              {Object.values(RemoteRole).map((role) => {
+                const config = getRoleConfig(role);
+                const isSelected = currentRole === role;
+
+                return (
+                  <button
+                    key={role}
+                    onClick={() => changeRole(role)}
+                    className={`w-full flex items-center gap-3 p-3 rounded-lg border transition-all duration-200 ${
+                      isSelected
+                        ? 'border-green-500 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300'
+                        : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50'
+                    }`}
+                  >
+                    <span className='text-lg'>{config.icon}</span>
+                    <div className='flex-1 text-left'>
+                      <div className='text-sm font-medium'>{config.label}</div>
+                      <div className='text-xs text-gray-500 dark:text-gray-400'>
+                        {config.description}
+                      </div>
+                    </div>
+                    {isSelected && (
+                      <div className='w-2 h-2 bg-green-500 rounded-full'></div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
 

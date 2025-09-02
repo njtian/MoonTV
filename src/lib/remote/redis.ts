@@ -247,3 +247,67 @@ export async function subscribeChannel(
     }
   };
 }
+
+// Direct functions that don't add the rc: prefix
+export async function hsetDirect(
+  key: string,
+  value: Record<string, string | number | null | undefined>
+): Promise<void> {
+  const { kv, type } = getRedis();
+  if (type === 'upstash') {
+    await (kv as any).hset(key, value as Record<string, string | number>);
+  } else {
+    await ensureConnected();
+    await (kv as any).hSet(key, value as Record<string, string | number>);
+  }
+}
+
+export async function hgetallDirect(
+  key: string
+): Promise<Record<string, string>> {
+  const { kv, type } = getRedis();
+  if (type === 'upstash') {
+    const res = await (kv as any).hgetall(key);
+    return res || {};
+  } else {
+    await ensureConnected();
+    const res = await (kv as any).hGetAll(key);
+    return res as Record<string, string>;
+  }
+}
+
+export async function delDirect(key: string): Promise<void> {
+  const { kv, type } = getRedis();
+  if (type === 'upstash') {
+    await (kv as any).del(key);
+  } else {
+    await ensureConnected();
+    await (kv as any).del(key);
+  }
+}
+
+export async function scanKeysDirect(pattern: string): Promise<string[]> {
+  const { kv, type } = getRedis();
+
+  if (type === 'upstash') {
+    // Upstash doesn't support SCAN, so we'll use a different approach
+    // For now, we'll return empty array and handle this differently
+    console.warn('Upstash does not support SCAN command');
+    return [];
+  } else {
+    await ensureConnected();
+    const keys: string[] = [];
+    let cursor = 0;
+
+    do {
+      const result = await (kv as any).scan(cursor, {
+        MATCH: pattern,
+        COUNT: 100,
+      });
+      cursor = result.cursor;
+      keys.push(...result.keys);
+    } while (cursor !== 0);
+
+    return keys;
+  }
+}

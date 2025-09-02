@@ -3,20 +3,73 @@
 /* eslint-disable no-console */
 import React from 'react';
 
+import { RemoteRole } from '@/hooks/useRemoteRole';
+
 type SessionInfo = {
   sid: string;
   token: string;
   controllerUrl: string;
 };
 
-export default function RemoteControlProvider() {
+interface RemoteControlProviderProps {
+  role?: RemoteRole;
+}
+
+export default function RemoteControlProvider({
+  role = RemoteRole.OFF,
+}: RemoteControlProviderProps) {
   const [open, setOpen] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [session, setSession] = React.useState<SessionInfo | null>(null);
+  const [sseConnected, setSseConnected] = React.useState(false);
+  const [hasPublisher, setHasPublisher] = React.useState(false);
+  const [_controllerSession, setControllerSession] = React.useState<
+    string | null
+  >(null);
   const sseRef = React.useRef<EventSource | null>(null);
+  const publisherCheckIntervalRef = React.useRef<NodeJS.Timeout | null>(null);
+
+  // 监听遥控器会话状态变化
+  React.useEffect(() => {
+    if (role !== RemoteRole.CONTROLLER) return;
+
+    const checkControllerSession = () => {
+      const localSession =
+        typeof window !== 'undefined'
+          ? localStorage.getItem('rc_controller_session')
+          : null;
+      setControllerSession(localSession);
+    };
+
+    // 初始检查
+    checkControllerSession();
+
+    // 监听localStorage变化
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'rc_controller_session') {
+        checkControllerSession();
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+
+    // 定期检查（因为同页面内的localStorage变化不会触发storage事件）
+    const interval = setInterval(checkControllerSession, 1000);
+
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      clearInterval(interval);
+    };
+  }, [role]);
 
   React.useEffect(() => {
+    // 只有在播放器角色时才初始化会话
+    if (role !== RemoteRole.PLAYER) {
+      console.log('RemoteControlProvider: 角色不是播放器，跳过初始化');
+      return;
+    }
+
     console.log('RemoteControlProvider: 开始初始化，检查会话恢复');
 
     // try resume from sessionStorage first
@@ -45,7 +98,7 @@ export default function RemoteControlProvider() {
       'RemoteControlProvider: 没有本地会话，尝试从服务器获取用户会话'
     );
     loadUserSessions();
-  }, []);
+  }, [role]);
 
   const loadUserSessions = async () => {
     try {
@@ -67,17 +120,17 @@ export default function RemoteControlProvider() {
         const latestSession = data.data.sessions[0];
         console.log('RemoteControlProvider: 最新会话:', latestSession);
 
-        // 检查会话是否仍然有效（有lastActive且最近活跃）
+        // 检查会话是否仍然有效（有playerLastActive且最近活跃）
         const now = Date.now();
         const isRecent =
-          latestSession.lastActive &&
-          now - latestSession.lastActive < 24 * 60 * 60 * 1000; // 24小时内活跃
+          latestSession.playerLastActive &&
+          now - latestSession.playerLastActive < 24 * 60 * 60 * 1000; // 24小时内活跃
 
         console.log(
           'RemoteControlProvider: 会话是否最近活跃:',
           isRecent,
-          'lastActive:',
-          latestSession.lastActive
+          'playerLastActive:',
+          latestSession.playerLastActive
         );
 
         if (isRecent) {
@@ -197,6 +250,91 @@ export default function RemoteControlProvider() {
     }
   };
 
+  // 获取状态信息
+  const getStatusInfo = () => {
+    if (role === RemoteRole.OFF) {
+      return null;
+    }
+
+    if (role === RemoteRole.CONTROLLER) {
+      // 遥控器端不显示状态，因为遥控器页面本身已经有状态显示
+      return null;
+    }
+
+    if (role === RemoteRole.PLAYER) {
+      if (!session) {
+        return {
+          text: '无遥控器',
+          bgColor: 'bg-gray-500',
+          icon: '🔒',
+        };
+      }
+
+      if (!sseConnected) {
+        return {
+          text: '连接中...',
+          bgColor: 'bg-yellow-500',
+          icon: '⏳',
+        };
+      }
+
+      if (sseConnected && !hasPublisher) {
+        return {
+          text: '等待遥控器连接',
+          bgColor: 'bg-orange-500',
+          icon: '📺',
+        };
+      }
+
+      if (sseConnected && hasPublisher) {
+        return {
+          text: '已连接遥控器',
+          bgColor: 'bg-green-500',
+          icon: '📺',
+        };
+      }
+    }
+
+    return null;
+  };
+
+  // 检查发布者状态（遥控器端是否在线）
+  const checkPublisherStatus = React.useCallback(async () => {
+    if (!session) return;
+
+    try {
+      const response = await fetch(
+        `/api/remote/subscribers?sid=${encodeURIComponent(
+          session.sid
+        )}&token=${encodeURIComponent(session.token)}&checkType=controller`
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        setHasPublisher(data.data.hasSubscribers);
+      }
+    } catch (error) {
+      console.error('检查遥控器状态失败:', error);
+    }
+  }, [session]);
+
+  // 开始发布者状态轮询
+  const startPublisherPolling = React.useCallback(() => {
+    if (publisherCheckIntervalRef.current) {
+      clearInterval(publisherCheckIntervalRef.current);
+    }
+
+    publisherCheckIntervalRef.current = setInterval(checkPublisherStatus, 2000);
+  }, [checkPublisherStatus]);
+
+  // 停止发布者状态轮询
+  const stopPublisherPolling = React.useCallback(() => {
+    if (publisherCheckIntervalRef.current) {
+      clearInterval(publisherCheckIntervalRef.current);
+      publisherCheckIntervalRef.current = null;
+    }
+  }, []);
+
   // Subscribe SSE on session ready and dispatch to window (kept for screen-side consumers)
   React.useEffect(() => {
     if (!session?.sid) return;
@@ -213,6 +351,13 @@ export default function RemoteControlProvider() {
       );
       sseRef.current = es;
 
+      es.onopen = () => {
+        console.log('SSE连接已建立');
+        setSseConnected(true);
+        // 开始检查发布者状态
+        startPublisherPolling();
+      };
+
       es.onmessage = (ev) => {
         try {
           const data = JSON.parse(ev.data);
@@ -227,6 +372,9 @@ export default function RemoteControlProvider() {
 
       es.onerror = (error) => {
         console.warn('SSE连接错误:', error);
+        setSseConnected(false);
+        setHasPublisher(false);
+        stopPublisherPolling();
       };
     } catch (sseError) {
       console.warn('创建SSE连接失败:', sseError);
@@ -241,20 +389,36 @@ export default function RemoteControlProvider() {
         }
         sseRef.current = null;
       }
+      stopPublisherPolling();
+      setSseConnected(false);
+      setHasPublisher(false);
     };
-  }, [session?.sid]);
+  }, [session?.sid, startPublisherPolling, stopPublisherPolling]);
+
+  // 如果角色是关闭状态，不显示任何内容
+  if (role === RemoteRole.OFF) {
+    return null;
+  }
+
+  const statusInfo = getStatusInfo();
 
   return (
     <>
-      {/* Floating button */}
-      <button
-        type='button'
-        onClick={() => setOpen(true)}
-        className='fixed bottom-5 right-5 z-40 rounded-full bg-primary-500 px-4 py-3 text-white shadow-lg hover:bg-primary-600 active:scale-95'
-        aria-label='Remote Control'
-      >
-        遥控
-      </button>
+      {/* 状态显示按钮 */}
+      {statusInfo && (
+        <button
+          type='button'
+          onClick={() => setOpen(true)}
+          className={`fixed bottom-5 right-5 z-40 rounded-full px-4 py-3 text-white shadow-lg hover:opacity-80 active:scale-95 transition-all duration-200 ${statusInfo.bgColor}`}
+          aria-label='Remote Control Status'
+          title={statusInfo.text}
+        >
+          <div className='flex items-center gap-2'>
+            <span className='text-lg'>{statusInfo.icon}</span>
+            <span className='text-sm font-medium'>{statusInfo.text}</span>
+          </div>
+        </button>
+      )}
 
       {/* Modal */}
       {open && (

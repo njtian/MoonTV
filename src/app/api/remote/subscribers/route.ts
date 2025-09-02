@@ -1,5 +1,5 @@
 /* eslint-disable no-console */
-import { hgetall } from '@/lib/remote/redis';
+import { hgetallDirect, hsetDirect, scanKeysDirect } from '@/lib/remote/redis';
 import { isAllowedOrigin, isRemoteEnabled } from '@/lib/remote/security';
 import { verifyPairingToken } from '@/lib/remote/token';
 
@@ -44,6 +44,7 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const sid = searchParams.get('sid');
     const token = searchParams.get('token');
+    const checkType = searchParams.get('checkType') || 'player';
 
     if (!sid || !token) {
       return json(
@@ -57,26 +58,134 @@ export async function GET(request: Request) {
       return json({ code: 401, message: 'invalid token' }, { status: 401 });
     }
 
-    // 检查会话是否存在
-    const session = await hgetall(`s:${sid}`);
+    // 检查会话是否存在 - 需要先找到会话的owner
+    // 由于我们不知道owner，需要通过scanKeys来查找
+    const sessionKeys = await scanKeysDirect(`u:*:rc:${sid}`);
+
+    if (sessionKeys.length === 0) {
+      return json({ code: 404, message: 'session not found' }, { status: 404 });
+    }
+
+    const sessionKey = sessionKeys[0];
+    const session = await hgetallDirect(sessionKey);
     if (!session || !session.ownerUserId) {
       return json({ code: 404, message: 'session not found' }, { status: 404 });
     }
 
-    // 检查是否有订阅者（通过检查会话中是否有订阅者信息）
-    // 这里我们通过检查会话的lastActive时间来判断是否有活跃的订阅者
-    const hasSubscribers =
-      session.lastActive && Date.now() - parseInt(session.lastActive) < 10000; // 10秒内有活动
+    // 使用服务器时间检查不同端的状态
+    const serverTime = Date.now();
+    let hasSubscribers = false;
+    if (checkType === 'controller') {
+      // 检查遥控器端是否活跃
+      hasSubscribers = !!(
+        session.controllerLastActive &&
+        serverTime - parseInt(session.controllerLastActive) < 10000
+      );
+    } else {
+      // 检查播放器端是否活跃（默认）
+      hasSubscribers = !!(
+        session.playerLastActive &&
+        serverTime - parseInt(session.playerLastActive) < 10000
+      );
+    }
 
     return json({
       code: 0,
       message: 'ok',
       data: {
         hasSubscribers,
+        serverTime, // 返回服务器时间供客户端参考
         session: {
           ownerUserId: session.ownerUserId,
           createdAt: session.createdAt,
           lastActive: session.lastActive,
+          playerLastActive: session.playerLastActive,
+          controllerLastActive: session.controllerLastActive,
+        },
+      },
+    });
+  } catch (err) {
+    console.error('Subscribers check error', err);
+    return json(
+      { code: 500, message: 'Internal Server Error' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    if (!isRemoteEnabled()) {
+      return json({ code: 400, message: 'Remote disabled' }, { status: 400 });
+    }
+
+    const body = await request.json();
+    const {
+      sid,
+      token,
+      checkType = 'player',
+      updateControllerStatus = false,
+    } = body;
+
+    if (!sid || !token) {
+      return json(
+        { code: 400, message: 'sid and token required' },
+        { status: 400 }
+      );
+    }
+
+    const payload = await verifyPairingToken(token);
+    if (!payload || payload.sid !== sid) {
+      return json({ code: 401, message: 'invalid token' }, { status: 401 });
+    }
+
+    // 检查会话是否存在 - 需要先找到会话的owner
+    const sessionKeys = await scanKeysDirect(`u:*:rc:${sid}`);
+
+    if (sessionKeys.length === 0) {
+      return json({ code: 404, message: 'session not found' }, { status: 404 });
+    }
+
+    const sessionKey = sessionKeys[0];
+    const session = await hgetallDirect(sessionKey);
+    if (!session || !session.ownerUserId) {
+      return json({ code: 404, message: 'session not found' }, { status: 404 });
+    }
+
+    // 如果需要更新控制器状态，先更新
+    if (updateControllerStatus) {
+      await hsetDirect(sessionKey, { controllerLastActive: Date.now() });
+    }
+
+    // 使用服务器时间检查不同端的状态
+    const serverTime = Date.now();
+    let hasSubscribers = false;
+    if (checkType === 'controller') {
+      // 检查遥控器端是否活跃
+      hasSubscribers = !!(
+        session.controllerLastActive &&
+        serverTime - parseInt(session.controllerLastActive) < 10000
+      );
+    } else {
+      // 检查播放器端是否活跃（默认）
+      hasSubscribers = !!(
+        session.playerLastActive &&
+        serverTime - parseInt(session.playerLastActive) < 10000
+      );
+    }
+
+    return json({
+      code: 0,
+      message: 'ok',
+      data: {
+        hasSubscribers,
+        serverTime, // 返回服务器时间供客户端参考
+        session: {
+          ownerUserId: session.ownerUserId,
+          createdAt: session.createdAt,
+          lastActive: session.lastActive,
+          playerLastActive: session.playerLastActive,
+          controllerLastActive: session.controllerLastActive,
         },
       },
     });

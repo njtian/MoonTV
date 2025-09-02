@@ -1,6 +1,8 @@
 /* eslint-disable no-console */
+import { NextRequest } from 'next/server';
+
 import { getAuthInfoFromCookie } from '@/lib/auth';
-import { hgetall, hset } from '@/lib/remote/redis';
+import { hgetallDirect, hsetDirect } from '@/lib/remote/redis';
 import { isAllowedOrigin, isRemoteEnabled } from '@/lib/remote/security';
 import { hash, signPairingToken } from '@/lib/remote/token';
 
@@ -42,9 +44,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const authInfo = getAuthInfoFromCookie(
-      request as Request & { headers: Headers }
-    );
+    const authInfo = getAuthInfoFromCookie(request as NextRequest);
     const username = authInfo?.username;
     if (!username) {
       return json({ code: 401, message: 'Unauthorized' }, { status: 401 });
@@ -56,7 +56,8 @@ export async function POST(request: Request) {
     }
 
     // 检查会话是否存在且属于当前用户
-    const session = await hgetall(`s:${sid}`);
+    const sessionKey = `u:${username}:rc:${sid}`;
+    const session = await hgetallDirect(sessionKey);
     if (!session || !session.ownerUserId) {
       return json({ code: 404, message: 'Session not found' }, { status: 404 });
     }
@@ -73,7 +74,7 @@ export async function POST(request: Request) {
     });
 
     // 更新会话的token hash
-    await hset(`s:${sid}`, {
+    await hsetDirect(sessionKey, {
       pairingTokenHash: await hash(token),
     });
 

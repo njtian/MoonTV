@@ -1,5 +1,5 @@
 /* eslint-disable no-console */
-import { hset, publish } from '@/lib/remote/redis';
+import { hsetDirect, publish, scanKeysDirect } from '@/lib/remote/redis';
 import { isAllowedOrigin, isRemoteEnabled } from '@/lib/remote/security';
 import { verifyPairingToken } from '@/lib/remote/token';
 
@@ -58,8 +58,16 @@ export async function POST(request: Request) {
       return json({ code: 401, message: 'invalid token' }, { status: 401 });
     }
 
-    // 更新会话的lastActive时间，表示有订阅者活跃
-    await hset(`s:${sid}`, { lastActive: Date.now() });
+    // 需要先找到会话的owner
+    const sessionKeys = await scanKeysDirect(`u:*:rc:${sid}`);
+
+    if (sessionKeys.length === 0) {
+      return json({ code: 404, message: 'session not found' }, { status: 404 });
+    }
+
+    const sessionKey = sessionKeys[0];
+    // 更新会话的playerLastActive时间，表示有播放器端活跃
+    await hsetDirect(sessionKey, { playerLastActive: Date.now() });
 
     // 如果有消息，将其发布到Redis频道，让遥控器端能够接收
     if (message) {

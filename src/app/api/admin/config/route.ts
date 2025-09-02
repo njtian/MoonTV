@@ -6,7 +6,7 @@ import { AdminConfigResult } from '@/lib/admin.types';
 import { getAuthInfoFromCookie } from '@/lib/auth';
 import { getConfig } from '@/lib/config';
 
-export const runtime = 'edge';
+// export const runtime = 'edge'; // 注释掉Edge Runtime，因为Redis客户端不兼容
 
 export async function GET(request: NextRequest) {
   const storageType = process.env.NEXT_PUBLIC_STORAGE_TYPE || 'localstorage';

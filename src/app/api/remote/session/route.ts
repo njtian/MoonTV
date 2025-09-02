@@ -1,5 +1,5 @@
 /* eslint-disable no-console */
-import { hset } from '@/lib/remote/redis';
+import { hsetDirect } from '@/lib/remote/redis';
 import { isAllowedOrigin, isRemoteEnabled } from '@/lib/remote/security';
 import { signPairingToken } from '@/lib/remote/token';
 
@@ -56,7 +56,7 @@ export async function POST(request: Request) {
     const token = await signPairingToken({ sid, owner, scope: 'control' });
 
     const createdAt = Date.now();
-    await hset(`s:${sid}`, {
+    await hsetDirect(`u:${owner}:rc:${sid}`, {
       ownerUserId: owner,
       pairingTokenHash: hash(token),
       controllerId: '',

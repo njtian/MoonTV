@@ -1,6 +1,8 @@
 /* eslint-disable no-console */
+import { NextRequest } from 'next/server';
+
 import { getAuthInfoFromCookie } from '@/lib/auth';
-import { hgetall, scanKeys } from '@/lib/remote/redis';
+import { hgetallDirect, scanKeysDirect } from '@/lib/remote/redis';
 import { isAllowedOrigin, isRemoteEnabled } from '@/lib/remote/security';
 
 export const runtime = 'nodejs';
@@ -42,36 +44,42 @@ export async function GET(request: Request) {
       );
     }
 
-    const authInfo = getAuthInfoFromCookie(
-      request as Request & { headers: Headers }
-    );
+    const authInfo = getAuthInfoFromCookie(request as NextRequest);
     const username = authInfo?.username;
     if (!username) {
       return json({ code: 401, message: 'Unauthorized' }, { status: 401 });
     }
 
-    // 扫描所有会话键
-    const sessionKeys = await scanKeys('s:*');
+    // 扫描当前用户的会话键
+    const sessionKeys = await scanKeysDirect(`u:${username}:rc:*`);
 
     const userSessions: Array<{
       sid: string;
       createdAt: number;
       lastActive?: number;
+      playerLastActive?: number;
+      controllerLastActive?: number;
       status: string;
       controllerId?: string;
     }> = [];
 
-    // 检查每个会话是否属于当前用户
+    // 检查每个会话
     for (const key of sessionKeys) {
       try {
-        const session = await hgetall(key);
+        const session = await hgetallDirect(key);
         if (session.ownerUserId === username) {
-          const sid = key.replace('s:', ''); // 移除前缀
+          const sid = key.replace(`u:${username}:rc:`, ''); // 移除前缀
           userSessions.push({
             sid,
             createdAt: parseInt(session.createdAt || '0'),
             lastActive: session.lastActive
               ? parseInt(session.lastActive)
+              : undefined,
+            playerLastActive: session.playerLastActive
+              ? parseInt(session.playerLastActive)
+              : undefined,
+            controllerLastActive: session.controllerLastActive
+              ? parseInt(session.controllerLastActive)
               : undefined,
             status: session.status || 'active',
             controllerId: session.controllerId || undefined,

@@ -49,16 +49,13 @@
 ## 6. API 设计（最小可用集）
 
 - `POST /api/remote/session`：创建会话（需登录）；返回 `{ sid, token, qrcodeUrl }`
-- `POST /api/remote/claim`：`sid, token` 抢占控制权（SETNX）
 - `POST /api/remote/publish`：`sid, token, message` 校验+限流后发布到 `rc:ch:{sid}`
 - `GET /api/remote/stream`：屏幕端用 SSE 订阅控制消息
-- `POST /api/remote/release`：释放控制权或销毁会话（仅拥有者可销毁）
-- 可选：`GET /api/remote/my-sessions`：列出当前用户的会话
-
-- `POST /api/remote/unbind`：控制端自助解除绑定（清空 `controllerId`）。
-- `POST /api/remote/kick`：被控端踢出当前控制器（清空 `controllerId`）。
-- `POST /api/remote/token/rotate`：拥有者旋转配对 token（旧链接立即失效）。
-- `POST /api/remote/session/resume`：根据 `sid` 恢复订阅并返回当前绑定状态。
+- `POST /api/remote/status`：发送状态更新消息
+- `GET /api/remote/subscribers`：检查订阅者状态
+- `POST /api/remote/subscribers`：更新订阅者状态
+- `GET /api/remote/my-sessions`：列出当前用户的会话
+- `POST /api/remote/session/regenerate-token`：重新生成会话 token
 
 返回体：统一 `{ code, message, data }` JSON 结构。
 
@@ -87,17 +84,19 @@
 ## 8. 前端集成点
 
 - 屏幕端：
-  - “开启遥控” → `POST /api/remote/session` → 显示二维码
+  - "开启遥控" → `POST /api/remote/session` → 显示二维码
   - `GET /api/remote/stream`（SSE）→ 分发到路由、播放器、焦点控制
+  - `POST /api/remote/status` → 定期发送状态更新
 - 控制端（/controller）：
-  - 读取 `sid/t` → `claim` 成功后使用 `publish` 发送命令
+  - 读取 `sid/t` → 直接使用 `publish` 发送命令
+  - `GET /api/remote/subscribers` → 检查连接状态
   - UI：D-Pad、播放、音量、搜索、快捷入口、连接状态
 
 ## 会话保持与重连（永久会话）
 
-- 被控端：持久化 `sid` 与 `deviceId`（cookie 或 sessionStorage），启动尝试 `session/resume`，成功后直接订阅流。
-- 控制端：保存带 `sid/t` 的 URL，重新打开后直接 `claim` 恢复控制；可选在本地保存 `controllerId` 仅用于展示。
-- 解绑/踢出后：服务端清空 `controllerId` 或轮换 token，旧链接失效，需要重新扫码。
+- 被控端：持久化 `sid` 与 `deviceId`（cookie 或 sessionStorage），启动时直接订阅流。
+- 控制端：保存带 `sid/t` 的 URL，重新打开后直接使用 `publish` 发送命令。
+- 会话管理：通过 `my-sessions` 获取用户会话列表，通过 `regenerate-token` 重新生成访问 token。
 
 ## 9. 安全与合规
 
@@ -108,10 +107,10 @@
 
 ## 10. 里程碑
 
-1. 搭建 API 与 Redis 接入（session/claim/publish/stream/release）
-2. `/controller` 极简 UI → 接入 `claim/publish`
+1. 搭建 API 与 Redis 接入（session/publish/stream/status/subscribers）
+2. `/controller` 极简 UI → 接入 `publish` 发送命令
 3. 屏幕端 SSE 接入并实现导航/播放/音量/焦点
-4. 接管/释放流程与二维码分享
+4. 会话管理与二维码分享
 5. 速率限制与心跳机制、错误提示与重连策略
 
 ## 13. 特性开关与安全

@@ -3,7 +3,7 @@
 ## 🎯 优化目标
 
 1. **移除会话锁机制** - 所有遥控器只要有会话 ID 就可以发送 publish
-2. **简化连接流程** - 遥控器端不再需要调用`/api/remote/claim`
+2. **简化连接流程** - 遥控器端直接使用 publish 发送命令，无需复杂的锁机制
 3. **智能状态检测** - 检查是否有订阅者（受控端），动态显示连接状态
 
 ## 🔧 主要变更
@@ -85,14 +85,8 @@ const [status, setStatus] = React.useState<
 **连接流程简化：**
 
 ```typescript
-// 变更前：复杂的claim流程
-const claimWithSession = async (sessionSid, sessionToken) => {
-  const res = await jsonFetch('/api/remote/claim', {
-    sid: sessionSid,
-    token: sessionToken,
-  });
-  // 处理锁获取逻辑...
-};
+// 变更前：复杂的claim流程（已移除）
+// 需要先获取控制权锁，然后才能发送命令
 
 // 变更后：简单的订阅者检查
 const checkSubscribers = async (sessionSid, sessionToken) => {
@@ -112,15 +106,10 @@ const checkSubscribers = async (sessionSid, sessionToken) => {
 **消息发送简化：**
 
 ```typescript
-// 变更前：需要controllerId
-await jsonFetch('/api/remote/publish', {
-  sid,
-  token,
-  controllerId,
-  message,
-});
+// 变更前：需要controllerId和锁验证（已移除）
+// 需要先获取控制权，然后才能发送命令
 
-// 变更后：无需controllerId
+// 变更后：直接发送，无需锁验证
 await jsonFetch('/api/remote/publish', {
   sid,
   token,

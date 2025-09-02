@@ -10,7 +10,7 @@ import 'sweetalert2/dist/sweetalert2.min.css';
 import { getConfig } from '@/lib/config';
 
 import { GlobalErrorIndicator } from '../components/GlobalErrorIndicator';
-import RemoteControlProvider from '../components/RemoteControlProvider';
+import RemoteRoleManager from '../components/RemoteRoleManager';
 import { RemoteStatusReporter } from '../components/RemoteStatusReporter';
 import { SiteProvider } from '../components/SiteProvider';
 import { ThemeProvider } from '../components/ThemeProvider';
@@ -117,7 +117,7 @@ export default async function RootLayout({ children }: { children: any }) {
               runtimeConfig.STORAGE_TYPE === 'upstash') &&
               runtimeConfig.ENABLE_REMOTE && (
                 <>
-                  <RemoteControlProvider />
+                  <RemoteRoleManager />
                   <RemoteStatusReporter />
                 </>
               )}

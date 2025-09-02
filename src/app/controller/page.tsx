@@ -59,6 +59,10 @@ export default function ControllerPage({
     lastActive: number;
   } | null>(null);
 
+  // 使用ref存储checkSubscribers函数以避免循环依赖
+  const checkSubscribersRef = React.useRef<typeof checkSubscribers>();
+  const tryGetLatestSessionRef = React.useRef<() => Promise<void>>();
+
   // 保存会话到本地存储
   const saveSessionToLocal = React.useCallback(
     (sessionData: { sid: string; token: string }) => {
@@ -74,7 +78,7 @@ export default function ControllerPage({
 
   // 检查订阅者状态
   const checkSubscribers = React.useCallback(
-    async (sessionSid: string, sessionToken: string) => {
+    async (sessionSid: string, sessionToken: string, shouldFallback = true) => {
       console.log('检查订阅者状态:', sessionSid);
       setStatus('checking');
 
@@ -82,7 +86,7 @@ export default function ControllerPage({
         const res = await fetch(
           `/api/remote/subscribers?sid=${encodeURIComponent(
             sessionSid
-          )}&token=${encodeURIComponent(sessionToken)}`
+          )}&token=${encodeURIComponent(sessionToken)}&checkType=player`
         );
         const data = await res.json();
 
@@ -107,10 +111,73 @@ export default function ControllerPage({
         setStatus('error');
         // 清除本地会话
         localStorage.removeItem('rc_controller_session');
+
+        // 如果需要回退且没有URL参数，尝试获取最新会话
+        if (shouldFallback && !sid && !token) {
+          if (tryGetLatestSessionRef.current) {
+            await tryGetLatestSessionRef.current();
+          }
+        }
       }
     },
-    [saveSessionToLocal]
+    [saveSessionToLocal, sid, token]
   );
+
+  // 将checkSubscribers存储到ref中
+  React.useEffect(() => {
+    checkSubscribersRef.current = checkSubscribers;
+  }, [checkSubscribers]);
+
+  // 获取最新会话
+  const tryGetLatestSession = React.useCallback(async () => {
+    console.log('尝试获取最新会话...');
+    try {
+      const res = await fetch('/api/remote/my-sessions');
+      const data = await res.json();
+
+      if (res.ok && data.code === 0 && data.data.sessions.length > 0) {
+        const latestSession = data.data.sessions[0]; // 已经按创建时间排序，第一个是最新的
+        console.log('获取到最新会话:', latestSession.sid);
+
+        // 为最新会话生成新的token
+        const tokenRes = await fetch('/api/remote/session/regenerate-token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sid: latestSession.sid }),
+        });
+
+        if (tokenRes.ok) {
+          const tokenData = await tokenRes.json();
+          if (tokenData.code === 0) {
+            saveSessionToLocal({
+              sid: latestSession.sid,
+              token: tokenData.data.token,
+            });
+            // 使用新会话检查订阅者状态，不进行回退
+            if (checkSubscribersRef.current) {
+              await checkSubscribersRef.current(
+                latestSession.sid,
+                tokenData.data.token,
+                false
+              );
+            }
+            return;
+          }
+        }
+      }
+
+      console.log('没有找到可用会话');
+      setStatus('error');
+    } catch (error) {
+      console.error('获取最新会话失败:', error);
+      setStatus('error');
+    }
+  }, [saveSessionToLocal]);
+
+  // 将tryGetLatestSession存储到ref中
+  React.useEffect(() => {
+    tryGetLatestSessionRef.current = tryGetLatestSession;
+  }, [tryGetLatestSession]);
 
   // 初始化时尝试恢复本地会话
   React.useEffect(() => {
@@ -142,19 +209,36 @@ export default function ControllerPage({
         } else {
           // 会话过期，清除本地存储
           localStorage.removeItem('rc_controller_session');
+          // 如果没有URL参数，尝试获取最新会话
+          if (!sid && !token) {
+            setTimeout(() => {
+              tryGetLatestSession();
+            }, 100);
+          }
         }
       } catch (error) {
         // eslint-disable-next-line no-console
         console.warn('解析本地会话失败:', error);
         localStorage.removeItem('rc_controller_session');
+        // 如果没有URL参数，尝试获取最新会话
+        if (!sid && !token) {
+          setTimeout(() => {
+            tryGetLatestSession();
+          }, 100);
+        }
       }
     } else if (sid && token) {
       // 没有本地会话但有URL参数，直接检查
       setTimeout(() => {
         checkSubscribers(sid, token);
       }, 100);
+    } else {
+      // 没有本地会话也没有URL参数，尝试获取最新会话
+      setTimeout(() => {
+        tryGetLatestSession();
+      }, 100);
     }
-  }, [sid, token, checkSubscribers]);
+  }, [sid, token, checkSubscribers, tryGetLatestSession]);
 
   // 定期检查订阅者状态
   React.useEffect(() => {
@@ -162,10 +246,22 @@ export default function ControllerPage({
 
     const timer = setInterval(async () => {
       try {
+        // 先更新控制器心跳状态
+        await fetch('/api/remote/subscribers', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sid: localSession.sid,
+            token: localSession.token,
+            updateControllerStatus: true, // 更新控制器状态
+          }),
+        });
+
+        // 再检查订阅者状态
         const res = await fetch(
           `/api/remote/subscribers?sid=${encodeURIComponent(
             localSession.sid
-          )}&token=${encodeURIComponent(localSession.token)}`
+          )}&token=${encodeURIComponent(localSession.token)}&checkType=player`
         );
         const data = await res.json();
 

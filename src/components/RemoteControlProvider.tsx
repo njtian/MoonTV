@@ -395,6 +395,33 @@ export default function RemoteControlProvider({
     };
   }, [session?.sid, startPublisherPolling, stopPublisherPolling]);
 
+  // 当角色变为OFF时，清理所有状态和连接
+  React.useEffect(() => {
+    if (role === RemoteRole.OFF) {
+      console.log('RemoteControlProvider: 角色已关闭，清理所有状态');
+
+      // 清理SSE连接
+      if (sseRef.current) {
+        try {
+          sseRef.current.close();
+        } catch (closeError) {
+          console.warn('关闭SSE连接失败:', closeError);
+        }
+        sseRef.current = null;
+      }
+
+      // 停止发布者状态轮询
+      stopPublisherPolling();
+
+      // 清理所有状态
+      setSession(null);
+      setSseConnected(false);
+      setHasPublisher(false);
+      setError(null);
+      setLoading(false);
+    }
+  }, [role, stopPublisherPolling]);
+
   // 如果角色是关闭状态，不显示任何内容
   if (role === RemoteRole.OFF) {
     return null;

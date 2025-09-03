@@ -246,18 +246,7 @@ export default function ControllerPage({
 
     const timer = setInterval(async () => {
       try {
-        // 先更新控制器心跳状态
-        await fetch('/api/remote/subscribers', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            sid: localSession.sid,
-            token: localSession.token,
-            updateControllerStatus: true, // 更新控制器状态
-          }),
-        });
-
-        // 再检查订阅者状态
+        // 只检查订阅者状态，不需要更新控制器心跳状态
         const res = await fetch(
           `/api/remote/subscribers?sid=${encodeURIComponent(
             localSession.sid

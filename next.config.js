@@ -58,6 +58,9 @@ const nextConfig = {
       net: false,
       tls: false,
       crypto: false,
+      fs: false,
+      path: false,
+      os: false,
     };
 
     return config;

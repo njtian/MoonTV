@@ -75,13 +75,19 @@ export async function GET(request: Request) {
     // 使用服务器时间检查不同端的状态
     const serverTime = Date.now();
     let hasSubscribers = false;
+
+    // 根据请求来源更新对应的lastActive时间戳
     if (checkType === 'controller') {
+      // 播放器请求检查遥控器状态：更新playerLastActive，表示播放器在线
+      await hsetDirect(sessionKey, { playerLastActive: serverTime });
       // 检查遥控器端是否活跃
       hasSubscribers = !!(
         session.controllerLastActive &&
         serverTime - parseInt(session.controllerLastActive) < 10000
       );
     } else {
+      // 遥控器请求检查播放器状态：更新controllerLastActive，表示遥控器在线
+      await hsetDirect(sessionKey, { controllerLastActive: serverTime });
       // 检查播放器端是否活跃（默认）
       hasSubscribers = !!(
         session.playerLastActive &&

@@ -12,6 +12,30 @@ module.exports = {
     'plugin:@typescript-eslint/recommended',
     'prettier',
   ],
+  overrides: [
+    {
+      files: ['electron/**/*.js'],
+      env: {
+        node: true,
+        browser: false,
+      },
+      rules: {
+        '@typescript-eslint/no-var-requires': 'off',
+        'no-console': 'off',
+      },
+    },
+    {
+      files: ['electron/preload.js'],
+      env: {
+        node: true,
+        browser: true,
+      },
+      rules: {
+        '@typescript-eslint/no-var-requires': 'off',
+        'no-console': 'off',
+      },
+    },
+  ],
   rules: {
     'no-unused-vars': 'off',
     'no-console': 'warn',

@@ -52,10 +52,12 @@
 - `POST /api/remote/publish`：`sid, token, message` 校验+限流后发布到 `rc:ch:{sid}`
 - `GET /api/remote/stream`：屏幕端用 SSE 订阅控制消息
 - `POST /api/remote/status`：发送状态更新消息
-- `GET /api/remote/subscribers`：检查订阅者状态
+- `GET /api/remote/subscribers`：检查订阅者状态（同时自动更新发送方心跳）
 - `POST /api/remote/subscribers`：更新订阅者状态
 - `GET /api/remote/my-sessions`：列出当前用户的会话
 - `POST /api/remote/session/regenerate-token`：重新生成会话 token
+
+> **心跳机制详情**：请参考 [HEARTBEAT_MECHANISM.md](./HEARTBEAT_MECHANISM.md) 了解详细的心跳实现逻辑。
 
 返回体：统一 `{ code, message, data }` JSON 结构。
 

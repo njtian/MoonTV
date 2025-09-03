@@ -23,6 +23,7 @@ import {
 } from '@/lib/db.client';
 import { SearchResult } from '@/lib/types';
 import { getVideoResolutionFromM3u8, processImageUrl } from '@/lib/utils';
+import { RemoteRole, useRemoteRole } from '@/hooks/useRemoteRole';
 
 import EpisodeSelector from '@/components/EpisodeSelector';
 import PageLayout from '@/components/PageLayout';
@@ -37,6 +38,9 @@ declare global {
 function PlayPageClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
+
+  // 远程控制角色状态
+  const { currentRole } = useRemoteRole();
 
   // -----------------------------------------------------------------------------
   // 状态变量（State）
@@ -1226,7 +1230,8 @@ function PlayPageClient() {
             // ignore parse error
           }
         }
-        if (dur > 0 && sid && token) {
+        // 只有在播放器角色且会话信息存在时才发送心跳
+        if (currentRole === RemoteRole.PLAYER && sid && token) {
           // 检测状态是否发生变化
           const currentStatus = {
             duration: dur,
@@ -1254,6 +1259,7 @@ function PlayPageClient() {
             lastStatus.currentId !== currentStatus.currentId;
 
           // 统一发送状态消息，包含完整状态信息
+          // 注意：这里总是发送心跳以保持连接活跃，即使状态没有变化
           await fetch('/api/remote/status', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
@@ -1284,7 +1290,7 @@ function PlayPageClient() {
     };
     tick();
     return () => timer && clearTimeout(timer);
-  }, []);
+  }, [currentRole]);
 
   // ---------------------------------------------------------------------------
   // 集数切换

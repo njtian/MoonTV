@@ -3,6 +3,8 @@
 import { usePathname } from 'next/navigation';
 import { useEffect, useRef } from 'react';
 
+import { RemoteRole, useRemoteRole } from './useRemoteRole';
+
 type PageStatus = {
   type: 'status';
   payload: {
@@ -21,6 +23,7 @@ type PageStatus = {
 
 export function useRemoteStatus() {
   const pathname = usePathname();
+  const { currentRole } = useRemoteRole();
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // 缓存上一次发送的状态，用于检测变化
@@ -34,6 +37,11 @@ export function useRemoteStatus() {
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
       intervalRef.current = null;
+    }
+
+    // 只有在播放器角色时才发送状态
+    if (currentRole !== RemoteRole.PLAYER) {
+      return;
     }
 
     // Don't send status from controller page itself
@@ -112,5 +120,5 @@ export function useRemoteStatus() {
         intervalRef.current = null;
       }
     };
-  }, [pathname]);
+  }, [pathname, currentRole]);
 }

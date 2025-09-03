@@ -66,11 +66,8 @@ export default function RemoteControlProvider({
   React.useEffect(() => {
     // 只有在播放器角色时才初始化会话
     if (role !== RemoteRole.PLAYER) {
-      console.log('RemoteControlProvider: 角色不是播放器，跳过初始化');
       return;
     }
-
-    console.log('RemoteControlProvider: 开始初始化，检查会话恢复');
 
     // try resume from sessionStorage first
     const raw =
@@ -81,12 +78,8 @@ export default function RemoteControlProvider({
       try {
         const s = JSON.parse(raw) as SessionInfo;
         if (s && s.sid && s.token) {
-          console.log(
-            'RemoteControlProvider: 从sessionStorage恢复会话:',
-            s.sid
-          );
           setSession(s);
-          return; // 如果本地有会话，直接使用，不进行服务器检查
+          return; // 如果本地有会话，直接使用
         }
       } catch {
         // ignore parse error
@@ -94,9 +87,6 @@ export default function RemoteControlProvider({
     }
 
     // 如果没有本地会话，尝试从服务器获取用户的最新会话
-    console.log(
-      'RemoteControlProvider: 没有本地会话，尝试从服务器获取用户会话'
-    );
     loadUserSessions();
   }, [role]);
 

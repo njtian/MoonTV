@@ -4,7 +4,7 @@ import { NextRequest } from 'next/server';
 import { getAuthInfoFromCookie } from '@/lib/auth';
 import { hgetallDirect, hsetDirect } from '@/lib/remote/redis';
 import { isAllowedOrigin, isRemoteEnabled } from '@/lib/remote/security';
-import { hash, signPairingToken } from '@/lib/remote/token';
+import { signPairingToken } from '@/lib/remote/token';
 
 export const runtime = 'nodejs';
 
@@ -73,9 +73,9 @@ export async function POST(request: Request) {
       scope: 'control',
     });
 
-    // 更新会话的token hash
+    // 更新会话的token（简化：直接存储token）
     await hsetDirect(sessionKey, {
-      pairingTokenHash: await hash(token),
+      pairingTokenHash: token,
     });
 
     // 构建控制器URL

@@ -26,8 +26,7 @@
     "electron:dist": "electron-builder --publish=never",
     "electron:client": "electron --no-sandbox electron/main.js",
     "electron:build:mac": "electron-builder --mac",
-    "electron:pack:mac": "electron-builder --mac --dir"
-  },
+    "electron:pack:mac": "electron-builder --mac --dir"  },
   "dependencies": {
     "@cloudflare/next-on-pages": "^1.13.12",
     "@dnd-kit/core": "^6.3.1",
@@ -72,8 +71,6 @@
     "@typescript-eslint/parser": "^5.62.0",
     "autoprefixer": "^10.4.20",
     "concurrently": "^9.1.0",
-    "electron": "^32.0.0",
-    "electron-builder": "^25.0.0",
     "eslint": "^8.57.1",
     "eslint-config-next": "^14.2.23",
     "eslint-config-prettier": "^8.10.0",

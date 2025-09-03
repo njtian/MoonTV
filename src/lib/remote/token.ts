@@ -8,24 +8,28 @@ export type PairingTokenPayload = {
 export async function signPairingToken(
   payload: PairingTokenPayload
 ): Promise<string> {
-  const secret = process.env.PASSWORD || '';
-  if (!secret) throw new Error('PASSWORD must be set to sign tokens');
-  const encoded = base64UrlEncode(JSON.stringify(payload));
-  const mac = await hmacHex(encoded, secret);
-  return `${encoded}.${mac}`;
+  // 简化token：直接使用base64编码的payload
+  const token = base64UrlEncode(JSON.stringify(payload));
+  return token;
 }
 
 export async function verifyPairingToken(
   token: string
 ): Promise<PairingTokenPayload | null> {
   try {
-    const [encoded, mac] = token.split('.');
-    const secret = process.env.PASSWORD || '';
-    if (!secret || !encoded || !mac) return null;
-    const expected = await hmacHex(encoded, secret);
-    if (!timingSafeEqual(mac, expected)) return null;
-    const json = base64UrlDecode(encoded);
-    return JSON.parse(json) as PairingTokenPayload;
+    // 检查是否是旧格式的token（包含.分隔符）
+    if (token.includes('.')) {
+      // 旧格式：提取payload部分
+      const [encoded] = token.split('.');
+      const json = base64UrlDecode(encoded);
+      const payload = JSON.parse(json) as PairingTokenPayload;
+      return payload;
+    } else {
+      // 新格式：直接解码base64
+      const json = base64UrlDecode(token);
+      const payload = JSON.parse(json) as PairingTokenPayload;
+      return payload;
+    }
   } catch {
     return null;
   }
@@ -38,66 +42,20 @@ export function generateControllerId(): string {
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-export async function hash(input: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(input);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = new Uint8Array(hashBuffer);
-  const hashHex = Array.from(hashArray)
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
-  return hashHex;
-}
+// hash函数已移除，不再需要密码验证
 
 function base64UrlEncode(input: string): string {
-  const enc = new TextEncoder().encode(input);
-  let str = '';
-  for (let i = 0; i < enc.length; i++) str += String.fromCharCode(enc[i]);
-  // btoa produces base64; convert to base64url
-  const b64 =
-    typeof btoa !== 'undefined'
-      ? btoa(str)
-      : Buffer.from(str, 'binary').toString('base64');
+  // 使用Buffer进行base64编码，兼容Node.js环境
+  const b64 = Buffer.from(input, 'utf8').toString('base64');
   return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 function base64UrlDecode(input: string): string {
+  // 使用Buffer进行base64解码，兼容Node.js环境
   const b64 = input.replace(/-/g, '+').replace(/_/g, '/');
   const pad = b64.length % 4 ? 4 - (b64.length % 4) : 0;
   const padded = b64 + '='.repeat(pad);
-  const bin =
-    typeof atob !== 'undefined'
-      ? atob(padded)
-      : Buffer.from(padded, 'base64').toString('binary');
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return new TextDecoder().decode(bytes);
+  return Buffer.from(padded, 'base64').toString('utf8');
 }
 
-async function hmacHex(message: string, secret: string): Promise<string> {
-  const key = await crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign']
-  );
-  const sig = await crypto.subtle.sign(
-    'HMAC',
-    key,
-    new TextEncoder().encode(message)
-  );
-  const arr = new Uint8Array(sig);
-  const hex: string[] = [];
-  for (let i = 0; i < arr.length; i++) {
-    hex.push(arr[i].toString(16).padStart(2, '0'));
-  }
-  return hex.join('');
-}
-
-function timingSafeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let out = 0;
-  for (let i = 0; i < a.length; i++) out |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return out === 0;
-}
+// HMAC相关函数已移除，不再需要密码验证

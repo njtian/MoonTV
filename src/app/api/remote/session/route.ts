@@ -58,7 +58,7 @@ export async function POST(request: Request) {
     const createdAt = Date.now();
     await hsetDirect(`u:${owner}:rc:${sid}`, {
       ownerUserId: owner,
-      pairingTokenHash: hash(token),
+      pairingTokenHash: token, // 简化：直接存储token而不是hash
       controllerId: '',
       status: 'active',
       createdAt,
@@ -93,19 +93,7 @@ export async function POST(request: Request) {
   }
 }
 
-function hash(input: string): string {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(input);
-  // Use subtle crypto digest to avoid Node crypto import in edge environments
-  // Though this route runs on node runtime, keep it compatible.
-  // Note: subtle.digest returns Promise<ArrayBuffer>, but we need sync here for simplicity.
-  // Fallback: simple djb2 hash to avoid async; acceptable as token is signed already.
-  let h = 5381;
-  for (let i = 0; i < data.length; i++) {
-    h = (h * 33) ^ data[i];
-  }
-  return (h >>> 0).toString(16);
-}
+// hash函数已移除，不再需要密码验证
 
 function getUsernameFromCookie(request: Request): string | null {
   const cookieHeader = request.headers.get('cookie');

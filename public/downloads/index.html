@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MoonTV 下载 - 桌面应用</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            padding: 40px;
+            max-width: 600px;
+            width: 100%;
+            text-align: center;
+        }
+        
+        .logo {
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 20px;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 32px;
+            color: white;
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+        
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 1.1em;
+        }
+        
+        .download-card {
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 30px;
+            margin: 20px 0;
+            border: 2px solid #e9ecef;
+            transition: all 0.3s ease;
+        }
+        
+        .download-card:hover {
+            border-color: #667eea;
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(0,0,0,0.1);
+        }
+        
+        .platform {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 15px;
+        }
+        
+        .platform-icon {
+            font-size: 24px;
+            margin-right: 10px;
+        }
+        
+        .platform-name {
+            font-size: 1.3em;
+            font-weight: 600;
+            color: #333;
+        }
+        
+        .version-info {
+            color: #666;
+            margin-bottom: 20px;
+            font-size: 0.9em;
+        }
+        
+        .download-btn {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 10px;
+            font-size: 1.1em;
+            font-weight: 600;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-block;
+            transition: all 0.3s ease;
+            margin: 5px;
+        }
+        
+        .download-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+        
+        .download-btn:active {
+            transform: translateY(0);
+        }
+        
+        .instructions {
+            background: #e3f2fd;
+            border-radius: 10px;
+            padding: 20px;
+            margin-top: 30px;
+            text-align: left;
+        }
+        
+        .instructions h3 {
+            color: #1976d2;
+            margin-bottom: 15px;
+        }
+        
+        .instructions ol {
+            color: #555;
+            line-height: 1.6;
+        }
+        
+        .instructions li {
+            margin-bottom: 8px;
+        }
+        
+        .status {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 10px;
+            font-weight: 500;
+        }
+        
+        .status.loading {
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+        
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .footer {
+            margin-top: 30px;
+            color: #666;
+            font-size: 0.9em;
+        }
+        
+        .footer a {
+            color: #667eea;
+            text-decoration: none;
+        }
+        
+        .footer a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">🌙</div>
+        <h1>MoonTV</h1>
+        <p class="subtitle">影视聚合桌面应用</p>
+        
+        <div id="downloads-container">
+            <div class="status loading">
+                🔄 正在加载下载信息...
+            </div>
+        </div>
+        
+        <div class="instructions">
+            <h3>📋 安装说明</h3>
+            <ol>
+                <li>下载 MoonTV Mac 版本压缩包</li>
+                <li>解压到 Downloads 目录：<code>tar -xzf MoonTV-mac-*.tar.gz</code></li>
+                <li>移动到 Applications 目录：<code>mv mac/MoonTV.app /Applications/</code></li>
+                <li>处理权限问题：<code>sudo xattr -rd com.apple.quarantine /Applications/MoonTV.app</code></li>
+                <li>启动应用：<code>open /Applications/MoonTV.app</code></li>
+            </ol>
+        </div>
+        
+        <div class="footer">
+            <p>需要帮助？访问 <a href="/">MoonTV 主页</a> 或查看 <a href="/docs">文档</a></p>
+        </div>
+    </div>
+
+    <script>
+        async function loadDownloads() {
+            try {
+                const response = await fetch('/api/downloads/info');
+                const data = await response.json();
+                
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+                
+                const container = document.getElementById('downloads-container');
+                container.innerHTML = `
+                    <div class="download-card">
+                        <div class="platform">
+                            <span class="platform-icon">🍎</span>
+                            <span class="platform-name">macOS</span>
+                        </div>
+                        <div class="version-info">
+                            版本: ${data.version} | 大小: ${data.fileSize} | 构建时间: ${new Date(data.buildDate).toLocaleString('zh-CN')}
+                        </div>
+                        <a href="/downloads/${data.fileName}" class="download-btn" download>
+                            📥 下载 MoonTV for macOS
+                        </a>
+                        <div class="status success">
+                            ✅ 支持 Intel 和 Apple Silicon Mac
+                        </div>
+                    </div>
+                `;
+            } catch (error) {
+                const container = document.getElementById('downloads-container');
+                container.innerHTML = `
+                    <div class="status error">
+                        ❌ 无法加载下载信息: ${error.message}
+                    </div>
+                `;
+            }
+        }
+        
+        // 页面加载时获取下载信息
+        loadDownloads();
+        
+        // 每30秒刷新一次下载信息
+        setInterval(loadDownloads, 30000);
+    </script>
+</body>
+</html>

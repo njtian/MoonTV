@@ -20,11 +20,13 @@
     "postbuild": "echo 'Build completed - sitemap generation disabled'",
     "prepare": "husky install",
     "pages:build": "pnpm gen:runtime && pnpm gen:manifest && next build && npx @cloudflare/next-on-pages --experimental-minify",
-    "electron:dev": "concurrently \"pnpm dev\" \"wait-on http://localhost:3000 && electron electron/main.js\"",
+    "electron:dev": "concurrently \"pnpm dev\" \"wait-on http://localhost:3000 && electron --no-sandbox electron/main.js\"",
     "electron:build": "electron-builder",
     "electron:pack": "electron-builder --dir",
     "electron:dist": "electron-builder --publish=never",
-    "electron:client": "electron electron/main.js"
+    "electron:client": "electron --no-sandbox electron/main.js",
+    "electron:build:mac": "electron-builder --mac",
+    "electron:pack:mac": "electron-builder --mac --dir"
   },
   "dependencies": {
     "@cloudflare/next-on-pages": "^1.13.12",
@@ -111,7 +113,23 @@
     ],
     "mac": {
       "category": "public.app-category.entertainment",
-      "icon": "public/icons/icon-512x512.png"
+      "icon": "public/icons/icon-512x512.png",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "dir",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ]
     },
     "win": {
       "icon": "public/icons/icon-512x512.png"

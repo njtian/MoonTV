@@ -20,6 +20,7 @@ function createWindow() {
       contextIsolation: true,
       enableRemoteModule: false,
       webSecurity: true,
+      sandbox: false, // 禁用沙盒模式以支持 root 用户运行
     },
     icon: path.join(__dirname, '../public/icons/icon-512x512.png'),
     titleBarStyle: 'default',

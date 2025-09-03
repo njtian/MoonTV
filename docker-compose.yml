@@ -1,10 +1,22 @@
 services:
-  redis:
-    image: redis:7
-    container_name: moontv-redis
+  moontv:
+    build:
+      context: .
+      dockerfile: Dockerfile.simple
+    container_name: moontv
     restart: unless-stopped
     ports:
-      - '6379:6379'
-    # command: ["redis-server", "--requirepass", "your_redis_password"]
+      - '3001:3001'
+    environment:
+      - USERNAME=admin
+      - PASSWORD=admin_password
+      - NEXT_PUBLIC_STORAGE_TYPE=redis
+      - REDIS_URL=redis://host.docker.internal:6379
+      - NEXT_PUBLIC_ENABLE_REGISTER=true
+      - SITE_NAME=MoonTV
+      - ANNOUNCEMENT=本网站仅提供影视信息搜索服务，所有内容均来自第三方网站。本站不存储任何视频资源，不对任何内容的准确性、合法性、完整性负责。
+      - REMOTE_ORIGIN_CHECK=off
     volumes:
-      - ./data/redis:/data
+      - ./config.json:/app/config.json:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

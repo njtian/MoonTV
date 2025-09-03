@@ -871,15 +871,15 @@ export default function ControllerPage({
                 try {
                   send({
                     type: 'playback',
-                    payload: { action: 'enterWebFullscreen' },
+                    payload: { action: 'toggleFullscreen' },
                   });
                 } catch (error) {
                   // eslint-disable-next-line no-console
-                  console.warn('发送网页全屏命令失败:', error);
+                  console.warn('发送全屏命令失败:', error);
                 }
               }}
             >
-              网页全屏
+              全屏
             </button>
             <button
               className='h-11 rounded-lg bg-orange-500 text-white font-medium hover:bg-orange-600 transition-colors'
@@ -887,11 +887,11 @@ export default function ControllerPage({
                 try {
                   send({
                     type: 'playback',
-                    payload: { action: 'exitWebFullscreen' },
+                    payload: { action: 'exitFullscreen' },
                   });
                 } catch (error) {
                   // eslint-disable-next-line no-console
-                  console.warn('发送退出网页全屏命令失败:', error);
+                  console.warn('发送退出全屏命令失败:', error);
                 }
               }}
             >

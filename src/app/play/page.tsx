@@ -989,24 +989,93 @@ function PlayPageClient() {
               showRemoteHint(`🎯 跳转到 ${mm}:${ss}`);
             }
           }
-          if (action === 'enterWebFullscreen') {
+          if (action === 'toggleFullscreen') {
             try {
-              if (artPlayerRef.current && !artPlayerRef.current.fullscreenWeb) {
-                artPlayerRef.current.fullscreenWeb = true;
+              if (artPlayerRef.current) {
+                // 智能全屏：先尝试原生全屏，失败后回退到网页全屏
+                if (
+                  !artPlayerRef.current.fullscreen &&
+                  !artPlayerRef.current.fullscreenWeb
+                ) {
+                  // 检查是否支持原生全屏
+                  const isFullscreenSupported =
+                    document.fullscreenEnabled ||
+                    (document as any).webkitFullscreenEnabled ||
+                    (document as any).mozFullScreenEnabled ||
+                    (document as any).msFullscreenEnabled;
+
+                  if (isFullscreenSupported) {
+                    // 尝试原生全屏
+                    try {
+                      artPlayerRef.current.fullscreen = true;
+                      // 使用setTimeout检查全屏是否成功
+                      setTimeout(() => {
+                        if (!artPlayerRef.current?.fullscreen) {
+                          // 原生全屏失败，回退到网页全屏
+                          console.warn('原生全屏失败，回退到网页全屏');
+
+                          if (artPlayerRef.current) {
+                            artPlayerRef.current.fullscreenWeb = true;
+                            showRemoteHint('⛶ 网页全屏');
+                          }
+                        } else {
+                          showRemoteHint('🖥 全屏');
+                        }
+                      }, 100);
+                    } catch (nativeError) {
+                      console.warn(
+                        '原生全屏失败，回退到网页全屏:',
+                        nativeError
+                      );
+
+                      // 回退到网页全屏
+                      artPlayerRef.current.fullscreenWeb = true;
+                      showRemoteHint('⛶ 网页全屏');
+                    }
+                  } else {
+                    // 不支持原生全屏，直接使用网页全屏
+                    artPlayerRef.current.fullscreenWeb = true;
+                    showRemoteHint('⛶ 网页全屏');
+                  }
+                } else {
+                  // 如果已经在全屏状态，则退出
+                  if (artPlayerRef.current.fullscreen) {
+                    artPlayerRef.current.fullscreen = false;
+                    showRemoteHint('🗗 退出全屏');
+                  } else if (artPlayerRef.current.fullscreenWeb) {
+                    artPlayerRef.current.fullscreenWeb = false;
+                    showRemoteHint('🗗 退出网页全屏');
+                  }
+                }
               }
-              showRemoteHint('⛶ 网页全屏');
             } catch (error) {
-              console.warn('进入网页全屏失败:', error);
+              console.warn('全屏操作失败:', error);
+
+              // 发生错误时，尝试使用网页全屏作为备选方案
+              if (artPlayerRef.current && !artPlayerRef.current.fullscreenWeb) {
+                try {
+                  artPlayerRef.current.fullscreenWeb = true;
+                  showRemoteHint('⛶ 网页全屏');
+                } catch (fallbackError) {
+                  console.warn('网页全屏也失败:', fallbackError);
+                }
+              }
             }
           }
-          if (action === 'exitWebFullscreen') {
+          if (action === 'exitFullscreen') {
             try {
-              if (artPlayerRef.current && artPlayerRef.current.fullscreenWeb) {
-                artPlayerRef.current.fullscreenWeb = false;
+              if (artPlayerRef.current) {
+                // 智能退出全屏：根据当前状态选择退出方式
+                if (artPlayerRef.current.fullscreen) {
+                  artPlayerRef.current.fullscreen = false;
+                  showRemoteHint('🗗 退出全屏');
+                } else if (artPlayerRef.current.fullscreenWeb) {
+                  artPlayerRef.current.fullscreenWeb = false;
+                  showRemoteHint('🗗 退出网页全屏');
+                }
               }
-              showRemoteHint('🗗 退出网页全屏');
             } catch (error) {
-              console.warn('退出网页全屏失败:', error);
+              console.warn('退出全屏失败:', error);
             }
           }
           return;

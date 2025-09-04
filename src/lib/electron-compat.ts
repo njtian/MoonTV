@@ -24,6 +24,46 @@ export const isElectron =
 export const hasElectronAPI =
   typeof window !== 'undefined' && window.electronAPI;
 
+// 等待electronAPI可用的函数
+export function waitForElectronAPI(
+  maxRetries = 20,
+  delay = 100
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (typeof window === 'undefined') {
+      resolve(false);
+      return;
+    }
+
+    let retries = 0;
+
+    const checkAPI = () => {
+      if (window.electronAPI) {
+        // eslint-disable-next-line no-console
+        console.log('electronAPI is now available in renderer');
+        resolve(true);
+        return;
+      }
+
+      retries++;
+      if (retries >= maxRetries) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          'electronAPI not available after',
+          maxRetries,
+          'retries in renderer'
+        );
+        resolve(false);
+        return;
+      }
+
+      setTimeout(checkAPI, delay);
+    };
+
+    checkAPI();
+  });
+}
+
 // 调试函数 - 检查Electron API状态
 export function debugElectronAPI() {
   if (typeof window === 'undefined') {
@@ -86,13 +126,25 @@ export function isClient(): boolean {
 export const electronFullscreen = {
   // 设置全屏状态
   setFullScreen: async (fullscreen: boolean): Promise<boolean> => {
-    if (hasElectronAPI && window.electronAPI) {
-      try {
-        return await window.electronAPI.window.setFullScreen(fullscreen);
-      } catch (error) {
-        // eslint-disable-next-line no-console
-        console.warn('Electron全屏设置失败:', error);
-        return false;
+    if (isElectron) {
+      // 确保API可用
+      if (!window.electronAPI) {
+        const apiAvailable = await waitForElectronAPI(5, 50);
+        if (!apiAvailable) {
+          // eslint-disable-next-line no-console
+          console.warn('Electron API不可用，无法设置全屏');
+          return false;
+        }
+      }
+
+      if (window.electronAPI) {
+        try {
+          return await window.electronAPI.window.setFullScreen(fullscreen);
+        } catch (error) {
+          // eslint-disable-next-line no-console
+          console.warn('Electron全屏设置失败:', error);
+          return false;
+        }
       }
     }
     return false;
@@ -100,13 +152,25 @@ export const electronFullscreen = {
 
   // 检查是否全屏
   isFullScreen: async (): Promise<boolean> => {
-    if (hasElectronAPI && window.electronAPI) {
-      try {
-        return await window.electronAPI.window.isFullScreen();
-      } catch (error) {
-        // eslint-disable-next-line no-console
-        console.warn('Electron全屏状态检查失败:', error);
-        return false;
+    if (isElectron) {
+      // 确保API可用
+      if (!window.electronAPI) {
+        const apiAvailable = await waitForElectronAPI(5, 50);
+        if (!apiAvailable) {
+          // eslint-disable-next-line no-console
+          console.warn('Electron API不可用，无法检查全屏状态');
+          return false;
+        }
+      }
+
+      if (window.electronAPI) {
+        try {
+          return await window.electronAPI.window.isFullScreen();
+        } catch (error) {
+          // eslint-disable-next-line no-console
+          console.warn('Electron全屏状态检查失败:', error);
+          return false;
+        }
       }
     }
     return false;
@@ -114,13 +178,25 @@ export const electronFullscreen = {
 
   // 切换全屏状态
   toggleFullScreen: async (): Promise<boolean> => {
-    if (hasElectronAPI && window.electronAPI) {
-      try {
-        return await window.electronAPI.window.toggleFullScreen();
-      } catch (error) {
-        // eslint-disable-next-line no-console
-        console.warn('Electron全屏切换失败:', error);
-        return false;
+    if (isElectron) {
+      // 确保API可用
+      if (!window.electronAPI) {
+        const apiAvailable = await waitForElectronAPI(5, 50);
+        if (!apiAvailable) {
+          // eslint-disable-next-line no-console
+          console.warn('Electron API不可用，无法切换全屏');
+          return false;
+        }
+      }
+
+      if (window.electronAPI) {
+        try {
+          return await window.electronAPI.window.toggleFullScreen();
+        } catch (error) {
+          // eslint-disable-next-line no-console
+          console.warn('Electron全屏切换失败:', error);
+          return false;
+        }
       }
     }
     return false;

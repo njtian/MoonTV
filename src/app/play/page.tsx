@@ -26,6 +26,7 @@ import {
   electronFullscreen,
   hasElectronAPI,
   isElectron,
+  waitForElectronAPI,
 } from '@/lib/electron-compat';
 import { SearchResult } from '@/lib/types';
 import { getVideoResolutionFromM3u8, processImageUrl } from '@/lib/utils';
@@ -101,7 +102,23 @@ function PlayPageClient() {
 
   // 调试Electron API状态
   useEffect(() => {
-    debugElectronAPI();
+    const checkElectronAPI = async () => {
+      debugElectronAPI();
+
+      // 如果在Electron环境中但API不可用，等待API加载
+      if (isElectron && !hasElectronAPI) {
+        console.log('等待Electron API加载...');
+        const apiAvailable = await waitForElectronAPI();
+        if (apiAvailable) {
+          console.log('Electron API已成功加载');
+          debugElectronAPI(); // 再次调试以确认API可用
+        } else {
+          console.warn('Electron API加载失败');
+        }
+      }
+    };
+
+    checkElectronAPI();
   }, []);
 
   // 跳过检查的时间间隔控制
@@ -1254,8 +1271,39 @@ function PlayPageClient() {
       if (isElectron && hasElectronAPI) {
         try {
           console.log('尝试Electron全屏...');
+          console.log('Electron环境检查:', {
+            isElectron,
+            hasElectronAPI,
+            electronAPI: !!window.electronAPI,
+          });
+
           const success = await electronFullscreen.setFullScreen(true);
+          console.log('Electron全屏API调用结果:', success);
+
           if (success) {
+            // 等待一小段时间让窗口全屏生效
+            await new Promise((resolve) => setTimeout(resolve, 100));
+
+            // 设置视频播放器全屏状态
+            video.fullscreen = true;
+            console.log('设置视频全屏状态:', video.fullscreen);
+
+            // 验证状态是否同步
+            setTimeout(async () => {
+              const isElectronFullscreen =
+                await electronFullscreen.isFullScreen();
+              const isVideoFullscreen = video.fullscreen;
+              console.log('全屏状态验证:', {
+                electron: isElectronFullscreen,
+                video: isVideoFullscreen,
+              });
+
+              if (!video.fullscreen) {
+                console.warn('视频全屏状态同步失败，尝试重新设置');
+                video.fullscreen = true;
+              }
+            }, 200);
+
             showRemoteHint('🖥 Electron全屏');
             return true;
           }
@@ -1318,6 +1366,22 @@ function PlayPageClient() {
             console.log('退出Electron全屏...');
             const success = await electronFullscreen.setFullScreen(false);
             if (success) {
+              // 等待一小段时间让窗口退出全屏生效
+              await new Promise((resolve) => setTimeout(resolve, 100));
+
+              // 同时设置视频播放器退出全屏状态
+              video.fullscreen = false;
+              video.fullscreenWeb = false;
+
+              // 验证状态是否同步
+              setTimeout(() => {
+                if (video.fullscreen || video.fullscreenWeb) {
+                  console.warn('视频全屏状态同步失败，尝试重新设置');
+                  video.fullscreen = false;
+                  video.fullscreenWeb = false;
+                }
+              }, 200);
+
               showRemoteHint('🗗 退出Electron全屏');
               return true;
             }

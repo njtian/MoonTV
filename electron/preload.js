@@ -68,8 +68,34 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
 console.log('electronAPI exposed to main world');
 
+// 等待electronAPI可用的函数
+function waitForElectronAPI(maxRetries = 10, delay = 100) {
+  return new Promise((resolve) => {
+    let retries = 0;
+
+    const checkAPI = () => {
+      if (window.electronAPI) {
+        console.log('electronAPI is now available');
+        resolve(true);
+        return;
+      }
+
+      retries++;
+      if (retries >= maxRetries) {
+        console.warn('electronAPI not available after', maxRetries, 'retries');
+        resolve(false);
+        return;
+      }
+
+      setTimeout(checkAPI, delay);
+    };
+
+    checkAPI();
+  });
+}
+
 // 在页面加载完成后执行
-window.addEventListener('DOMContentLoaded', () => {
+window.addEventListener('DOMContentLoaded', async () => {
   console.log('DOMContentLoaded event fired');
   console.log('window.electronAPI available:', !!window.electronAPI);
 
@@ -78,6 +104,10 @@ window.addEventListener('DOMContentLoaded', () => {
   console.log('isElectron detected:', isElectron);
 
   if (isElectron) {
+    // 等待electronAPI可用
+    const apiAvailable = await waitForElectronAPI();
+    console.log('electronAPI available after wait:', apiAvailable);
+
     // 添加Electron标识类到body
     document.body.classList.add('electron-app');
 

@@ -15,9 +15,19 @@ import VideoCard from '@/components/VideoCard';
 
 interface ContinueWatchingProps {
   className?: string;
+  onVideoClick?: (
+    source: string,
+    id: string,
+    title: string,
+    year: string,
+    type: 'tv' | 'movie'
+  ) => void;
 }
 
-export default function ContinueWatching({ className }: ContinueWatchingProps) {
+export default function ContinueWatching({
+  className,
+  onVideoClick,
+}: ContinueWatchingProps) {
   const [playRecords, setPlayRecords] = useState<
     (PlayRecord & { key: string })[]
   >([]);
@@ -144,6 +154,18 @@ export default function ContinueWatching({ className }: ContinueWatchingProps) {
                       )
                     }
                     type={record.total_episodes > 1 ? 'tv' : ''}
+                    {...(onVideoClick
+                      ? {
+                          onClick: () =>
+                            onVideoClick(
+                              source,
+                              id,
+                              record.title,
+                              record.year,
+                              record.total_episodes > 1 ? 'tv' : 'movie'
+                            ),
+                        }
+                      : {})}
                   />
                 </div>
               );

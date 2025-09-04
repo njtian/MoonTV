@@ -36,6 +36,7 @@ interface VideoCardProps {
   items?: SearchResult[];
   type?: string;
   active?: boolean;
+  onClick?: () => void;
 }
 
 export default function VideoCard({
@@ -56,6 +57,7 @@ export default function VideoCard({
   items,
   type = '',
   active = false,
+  onClick,
 }: VideoCardProps) {
   const router = useRouter();
   const [favorited, setFavorited] = useState(false);
@@ -198,24 +200,31 @@ export default function VideoCard({
   );
 
   const handleClick = useCallback(() => {
-    if (from === 'douban') {
-      router.push(
-        `/play?title=${encodeURIComponent(actualTitle.trim())}${
-          actualYear ? `&year=${actualYear}` : ''
-        }${actualSearchType ? `&stype=${actualSearchType}` : ''}`
-      );
-    } else if (actualSource && actualId) {
-      router.push(
-        `/play?source=${actualSource}&id=${actualId}&title=${encodeURIComponent(
-          actualTitle
-        )}${actualYear ? `&year=${actualYear}` : ''}${
-          isAggregate ? '&prefer=true' : ''
-        }${
-          actualQuery ? `&stitle=${encodeURIComponent(actualQuery.trim())}` : ''
-        }${actualSearchType ? `&stype=${actualSearchType}` : ''}`
-      );
+    if (onClick) {
+      onClick();
+    } else {
+      if (from === 'douban') {
+        router.push(
+          `/play?title=${encodeURIComponent(actualTitle.trim())}${
+            actualYear ? `&year=${actualYear}` : ''
+          }${actualSearchType ? `&stype=${actualSearchType}` : ''}`
+        );
+      } else if (actualSource && actualId) {
+        router.push(
+          `/play?source=${actualSource}&id=${actualId}&title=${encodeURIComponent(
+            actualTitle
+          )}${actualYear ? `&year=${actualYear}` : ''}${
+            isAggregate ? '&prefer=true' : ''
+          }${
+            actualQuery
+              ? `&stitle=${encodeURIComponent(actualQuery.trim())}`
+              : ''
+          }${actualSearchType ? `&stype=${actualSearchType}` : ''}`
+        );
+      }
     }
   }, [
+    onClick,
     from,
     actualSource,
     actualId,

@@ -6,6 +6,7 @@ import React from 'react';
 
 import { SearchResult } from '@/lib/types';
 
+import ContinueWatching from '@/components/ContinueWatching';
 import EpisodeSelector from '@/components/EpisodeSelector';
 
 function jsonFetch(url: string, body: unknown) {
@@ -520,6 +521,31 @@ export default function ControllerPage({
     }
   };
 
+  // 处理继续观看视频点击
+  const handleVideoClick = (
+    source: string,
+    id: string,
+    title: string,
+    year: string,
+    type: 'tv' | 'movie'
+  ) => {
+    try {
+      send({
+        type: 'continueWatching',
+        payload: {
+          source,
+          id,
+          title,
+          year,
+          stype: type,
+        },
+      });
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.warn('发送继续观看命令失败:', error);
+    }
+  };
+
   return (
     <div className='mx-auto max-w-md p-4 relative'>
       <div className='flex items-center justify-between mb-4'>
@@ -670,6 +696,13 @@ export default function ControllerPage({
             当前页面：{pageStatus.pageTitle || pageStatus.page}
           </p>
           <p className='text-xs opacity-70 mt-1'>导航控制可用</p>
+        </div>
+      )}
+
+      {/* Show Continue Watching section when not on play page */}
+      {pageStatus.page && pageStatus.page !== 'play' && (
+        <div className='mb-4'>
+          <ContinueWatching onVideoClick={handleVideoClick} />
         </div>
       )}
 

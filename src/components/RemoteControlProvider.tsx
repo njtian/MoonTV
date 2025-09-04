@@ -1,6 +1,7 @@
 'use client';
 
 /* eslint-disable no-console */
+import { useRouter } from 'next/navigation';
 import React from 'react';
 
 import { RemoteRole } from '@/hooks/useRemoteRole';
@@ -18,6 +19,7 @@ interface RemoteControlProviderProps {
 export default function RemoteControlProvider({
   role = RemoteRole.OFF,
 }: RemoteControlProviderProps) {
+  const router = useRouter();
   const [open, setOpen] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -411,6 +413,53 @@ export default function RemoteControlProvider({
       setLoading(false);
     }
   }, [role, stopPublisherPolling]);
+
+  // 全局远程控制事件监听器 - 处理来自任何页面的遥控命令
+  React.useEffect(() => {
+    const handleRemoteMessage = (e: Event) => {
+      try {
+        const detail = (e as CustomEvent).detail;
+        const msg = detail?.message || detail;
+        if (!msg) return;
+
+        const type = msg.type;
+        const payload = msg.payload || {};
+
+        // 处理继续观看命令
+        if (type === 'continueWatching') {
+          console.log('收到继续观看命令，导航到播放页面:', payload);
+
+          // 构建播放页面URL参数
+          const params = new URLSearchParams({
+            source: payload.source,
+            id: payload.id,
+            title: payload.title || '',
+            year: payload.year || '',
+            stype: payload.stype || 'movie',
+          });
+
+          // 导航到播放页面
+          router.push(`/play?${params.toString()}`);
+        }
+      } catch (error) {
+        console.warn('处理远程消息失败:', error);
+      }
+    };
+
+    // 添加全局事件监听器
+    window.addEventListener(
+      'remote:message',
+      handleRemoteMessage as EventListener
+    );
+
+    return () => {
+      // 清理事件监听器
+      window.removeEventListener(
+        'remote:message',
+        handleRemoteMessage as EventListener
+      );
+    };
+  }, [router]);
 
   // 如果角色是关闭状态，不显示任何内容
   if (role === RemoteRole.OFF) {

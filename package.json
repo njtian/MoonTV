@@ -1,6 +1,8 @@
 {
   "name": "moontv",
-  "version": "20250904082546",
+  "version": "1.0.0-20250904082546",
+  "description": "MoonTV - 影视聚合桌面应用",
+  "author": "MoonTV Team",
   "private": true,
   "scripts": {
     "dev": "pnpm gen:runtime && pnpm gen:manifest && next dev -H 0.0.0.0",
@@ -25,8 +27,8 @@
     "electron:pack": "electron-builder --dir",
     "electron:dist": "electron-builder --publish=never",
     "electron:client": "npx electron --no-sandbox electron/main.js",
-    "electron:build:mac": "electron-builder --mac",
-    "electron:pack:mac": "electron-builder --mac --dir"
+    "electron:build:mac": "NODE_ENV=production electron-builder --mac",
+    "electron:pack:mac": "NODE_ENV=production electron-builder --mac --dir"
   },
   "dependencies": {
     "@cloudflare/next-on-pages": "^1.13.12",
@@ -108,25 +110,31 @@
       "output": "dist-electron"
     },
     "files": [
-      "electron/**/*",
-      "public/icons/**/*"
+      "electron/main.js",
+      "electron/preload.js",
+      "electron/config.js",
+      "public/icons/icon.icns"
     ],
+    "asar": false,
+    "disableDefaultIgnoredFiles": true,
     "mac": {
       "category": "public.app-category.entertainment",
-      "icon": "public/icons/icon-512x512.png",
+      "icon": "public/icons/icon.icns",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
       "target": [
         {
           "target": "dmg",
           "arch": [
-            "x64",
-            "arm64"
+            "x64"
           ]
         },
         {
           "target": "dir",
           "arch": [
-            "x64",
-            "arm64"
+            "x64"
           ]
         }
       ]
@@ -136,6 +144,23 @@
     },
     "linux": {
       "icon": "public/icons/icon-512x512.png"
+    },
+    "dmg": {
+      "title": "MoonTV",
+      "icon": "public/icons/icon.icns",
+      "background": "public/icons/icon-512x512.png",
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
     }
   }
 }

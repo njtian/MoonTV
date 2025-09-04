@@ -138,16 +138,35 @@ pnpm electron:dist
 # 客户端会自动连接到配置的服务器地址
 ```
 
-### 配置服务器地址
+### 环境配置
 
-在 Electron 客户端中，可以通过环境变量配置服务器地址：
+MoonTV Electron 支持自动环境检测：
+
+- **开发环境**: 自动连接到 `http://localhost:3000`
+- **生产环境**: 自动连接到 `https://mtv.080604.xyz`
+
+#### 手动指定服务器地址
+
+如果需要使用自定义服务器地址，可以通过环境变量覆盖：
 
 ```bash
-# 开发环境
-SERVER_URL=http://localhost:3000 electron electron/main.js
+# 使用自定义服务器地址
+SERVER_URL=https://your-custom-domain.com electron electron/main.js
 
-# 生产环境
-SERVER_URL=https://your-domain.com electron electron/main.js
+# 开发环境强制使用生产服务器
+NODE_ENV=development SERVER_URL=https://mtv.080604.xyz electron electron/main.js
+```
+
+#### 开发环境启动
+
+使用便捷的开发脚本：
+
+```bash
+# 启动开发环境（自动使用本机服务器）
+./scripts/dev-electron.sh
+
+# 或者使用 pnpm 命令
+pnpm electron:dev
 ```
 
 ## 故障排除

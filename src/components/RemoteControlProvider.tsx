@@ -441,6 +441,21 @@ export default function RemoteControlProvider({
           // 导航到播放页面
           router.push(`/play?${params.toString()}`);
         }
+
+        // 处理搜索播放命令
+        if (type === 'searchAndPlay') {
+          console.log('收到搜索播放命令，导航到播放页面:', payload);
+
+          // 构建搜索播放页面URL参数
+          const params = new URLSearchParams({
+            title: payload.title || '',
+            year: payload.year || '',
+            stype: payload.stype || 'movie',
+          });
+
+          // 导航到播放页面进行搜索
+          router.push(`/play?${params.toString()}`);
+        }
       } catch (error) {
         console.warn('处理远程消息失败:', error);
       }

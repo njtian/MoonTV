@@ -109,6 +109,9 @@ function PlayPageClient() {
     blockAdEnabledRef.current = blockAdEnabled;
   }, [blockAdEnabled]);
 
+  // 自动全屏触发标记（防止重复触发）
+  const [autoFullscreenTriggered, setAutoFullscreenTriggered] = useState(false);
+
   // 视频基本信息
   const [videoTitle, setVideoTitle] = useState(searchParams.get('title') || '');
   const [videoYear, setVideoYear] = useState(searchParams.get('year') || '');
@@ -1291,6 +1294,91 @@ function PlayPageClient() {
     tick();
     return () => timer && clearTimeout(timer);
   }, [currentRole]);
+
+  // ---------------------------------------------------------------------------
+  // 播放器角色自动全屏
+  // ---------------------------------------------------------------------------
+  // 播放器角色自动全屏逻辑
+  useEffect(() => {
+    console.log('自动全屏检查:', {
+      currentRole,
+      loading,
+      autoFullscreenTriggered,
+      hasPlayer: !!artPlayerRef.current,
+      duration: artPlayerRef.current?.duration,
+    });
+
+    // 只有在播放器角色且播放器准备就绪且未触发过自动全屏时才自动全屏
+    if (
+      currentRole === RemoteRole.PLAYER &&
+      !loading &&
+      !autoFullscreenTriggered
+    ) {
+      console.log('开始自动全屏检查，延迟2秒...');
+
+      // 延迟更长时间确保播放器完全初始化
+      const timer = setTimeout(() => {
+        console.log('延迟检查:', {
+          hasPlayer: !!artPlayerRef.current,
+          duration: artPlayerRef.current?.duration,
+          autoFullscreenTriggered,
+        });
+
+        if (artPlayerRef.current && !autoFullscreenTriggered) {
+          const video = artPlayerRef.current;
+
+          // 检查是否已经有视频内容
+          if (video.duration > 0) {
+            console.log('视频已加载，开始自动全屏...');
+
+            // 标记已触发，防止重复触发
+            setAutoFullscreenTriggered(true);
+
+            try {
+              // 智能全屏：先尝试原生全屏，失败后回退到网页全屏
+              if (!video.fullscreen && !video.fullscreenWeb) {
+                const isFullscreenSupported =
+                  document.fullscreenEnabled ||
+                  (document as any).webkitFullscreenEnabled ||
+                  (document as any).mozFullScreenEnabled ||
+                  (document as any).msFullscreenEnabled;
+
+                console.log('全屏支持检查:', { isFullscreenSupported });
+
+                if (isFullscreenSupported) {
+                  try {
+                    video.fullscreen = true;
+                    console.log('尝试原生全屏...');
+                    showRemoteHint('🖥 自动全屏');
+                  } catch (error) {
+                    console.log('原生全屏失败，回退到网页全屏:', error);
+                    // 原生全屏失败，回退到网页全屏
+                    video.fullscreenWeb = true;
+                    showRemoteHint('⛶ 自动网页全屏');
+                  }
+                } else {
+                  console.log('不支持原生全屏，使用网页全屏');
+                  // 不支持原生全屏，直接使用网页全屏
+                  video.fullscreenWeb = true;
+                  showRemoteHint('⛶ 自动网页全屏');
+                }
+              } else {
+                console.log('已经在全屏状态，跳过自动全屏');
+              }
+            } catch (error) {
+              console.warn('自动全屏失败:', error);
+            }
+          } else {
+            console.log('视频未加载完成，跳过自动全屏');
+          }
+        } else {
+          console.log('播放器未准备好或已触发过自动全屏');
+        }
+      }, 2000); // 延迟2秒确保播放器完全初始化
+
+      return () => clearTimeout(timer);
+    }
+  }, [currentRole, loading, autoFullscreenTriggered]);
 
   // ---------------------------------------------------------------------------
   // 集数切换

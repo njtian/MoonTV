@@ -2,6 +2,7 @@
 /* eslint-disable no-console */
 
 import Image from 'next/image';
+import { useRouter } from 'next/navigation';
 import React from 'react';
 
 import { SearchResult } from '@/lib/types';
@@ -24,6 +25,7 @@ export default function ControllerPage({
 }: {
   searchParams: ControllerSearchParams;
 }) {
+  const router = useRouter();
   const sid = searchParams?.sid || '';
   const token = searchParams?.t || '';
   const [status, setStatus] = React.useState<
@@ -739,47 +741,55 @@ export default function ControllerPage({
         </div>
       )}
 
-      <div className='grid grid-cols-3 gap-3'>
-        <div />
-        <button
-          className='h-14 rounded-lg bg-gray-200 dark:bg-zinc-800 text-lg flex items-center justify-center'
-          onClick={() => send({ type: 'focus', payload: { key: 'up' } })}
-        >
-          ▲
-        </button>
-        <div />
-        <button
-          className='h-14 rounded-lg bg-gray-200 dark:bg-zinc-800 text-lg flex items-center justify-center'
-          onClick={() => send({ type: 'focus', payload: { key: 'left' } })}
-        >
-          ◀
-        </button>
-        <button
-          className='h-14 rounded-lg bg-gray-200 dark:bg-zinc-800 text-base font-medium flex items-center justify-center'
-          onClick={() => send({ type: 'focus', payload: { key: 'enter' } })}
-        >
-          OK
-        </button>
-        <button
-          className='h-14 rounded-lg bg-gray-200 dark:bg-zinc-800 text-lg flex items-center justify-center'
-          onClick={() => send({ type: 'focus', payload: { key: 'right' } })}
-        >
-          ▶
-        </button>
-        <div />
-        <button
-          className='h-14 rounded-lg bg-gray-200 dark:bg-zinc-800 text-lg flex items-center justify-center'
-          onClick={() => send({ type: 'focus', payload: { key: 'down' } })}
-        >
-          ▼
-        </button>
-        <div />
-      </div>
+      {/* Show keyboard controls only on play page */}
+      {pageStatus.page === 'play' && (
+        <div className='grid grid-cols-3 gap-3'>
+          <div />
+          <button
+            className='h-14 rounded-lg bg-gray-200 dark:bg-zinc-800 text-lg flex items-center justify-center'
+            onClick={() => send({ type: 'focus', payload: { key: 'up' } })}
+          >
+            ▲
+          </button>
+          <div />
+          <button
+            className='h-14 rounded-lg bg-gray-200 dark:bg-zinc-800 text-lg flex items-center justify-center'
+            onClick={() => send({ type: 'focus', payload: { key: 'left' } })}
+          >
+            ◀
+          </button>
+          <button
+            className='h-14 rounded-lg bg-gray-200 dark:bg-zinc-800 text-base font-medium flex items-center justify-center'
+            onClick={() => send({ type: 'focus', payload: { key: 'enter' } })}
+          >
+            OK
+          </button>
+          <button
+            className='h-14 rounded-lg bg-gray-200 dark:bg-zinc-800 text-lg flex items-center justify-center'
+            onClick={() => send({ type: 'focus', payload: { key: 'right' } })}
+          >
+            ▶
+          </button>
+          <div />
+          <button
+            className='h-14 rounded-lg bg-gray-200 dark:bg-zinc-800 text-lg flex items-center justify-center'
+            onClick={() => send({ type: 'focus', payload: { key: 'down' } })}
+          >
+            ▼
+          </button>
+          <div />
+        </div>
+      )}
 
       <div className='mt-3 flex justify-end'>
         <button
           className='h-10 px-4 rounded-lg bg-gray-200 dark:bg-zinc-800'
-          onClick={() => send({ type: 'focus', payload: { key: 'back' } })}
+          onClick={() => {
+            // 发送返回命令到播放器
+            send({ type: 'focus', payload: { key: 'back' } });
+            // 同时导航到主页
+            router.push('/');
+          }}
         >
           返回
         </button>

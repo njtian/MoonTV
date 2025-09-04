@@ -2,9 +2,10 @@
 
 'use client';
 
-import { ChevronRight, Smartphone } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 import Link from 'next/link';
-import { Suspense, useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { Suspense, useCallback, useEffect, useState } from 'react';
 
 // 客户端收藏 API
 import {
@@ -15,6 +16,15 @@ import {
 } from '@/lib/db.client';
 import { getDoubanCategories } from '@/lib/douban.client';
 import { DoubanItem } from '@/lib/types';
+import { useControllerStatus } from '@/hooks/useControllerStatus';
+
+function jsonFetch(url: string, body: unknown) {
+  return fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
 
 import CapsuleSwitch from '@/components/CapsuleSwitch';
 import ContinueWatching from '@/components/ContinueWatching';
@@ -24,12 +34,20 @@ import { useSite } from '@/components/SiteProvider';
 import VideoCard from '@/components/VideoCard';
 
 function HomeClient() {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<'home' | 'favorites'>('home');
   const [hotMovies, setHotMovies] = useState<DoubanItem[]>([]);
   const [hotTvShows, setHotTvShows] = useState<DoubanItem[]>([]);
   const [hotVarietyShows, setHotVarietyShows] = useState<DoubanItem[]>([]);
   const [loading, setLoading] = useState(true);
   const { announcement } = useSite();
+  const { status: controllerStatus, isController } = useControllerStatus();
+
+  // 播放状态监听相关状态
+  const [isListeningForPlayback, setIsListeningForPlayback] = useState(false);
+  const [playbackTimeout, setPlaybackTimeout] = useState<NodeJS.Timeout | null>(
+    null
+  );
   // 收藏数据需要在 useMemo 之前声明
   // 收藏夹数据
   type FavoriteItem = {
@@ -45,6 +63,233 @@ function HomeClient() {
   const [favoriteItems, setFavoriteItems] = useState<FavoriteItem[]>([]);
 
   const [showAnnouncement, setShowAnnouncement] = useState(false);
+
+  // 发送遥控指令的函数
+  const send = async (message: unknown) => {
+    if (!isController) {
+      return;
+    }
+
+    try {
+      // 获取遥控器会话信息
+      const sessionRaw = window.localStorage.getItem('rc_controller_session');
+      if (!sessionRaw) {
+        return;
+      }
+
+      let sid = '';
+      let token = '';
+      try {
+        const s = JSON.parse(sessionRaw);
+        sid = s.sid || '';
+        token = s.token || '';
+      } catch {
+        return;
+      }
+
+      if (!sid || !token) {
+        return;
+      }
+
+      await jsonFetch('/api/remote/publish', {
+        sid,
+        token,
+        message,
+      });
+    } catch (error) {
+      // 静默处理错误，避免console输出
+    }
+  };
+
+  // 开始监听播放状态
+  const startListeningForPlayback = useCallback(() => {
+    if (!isController || isListeningForPlayback) {
+      return;
+    }
+
+    setIsListeningForPlayback(true);
+
+    // 获取会话信息
+    const sessionRaw = window.localStorage.getItem('rc_controller_session');
+    if (!sessionRaw) {
+      setIsListeningForPlayback(false);
+      return;
+    }
+
+    let sid = '';
+    let token = '';
+    try {
+      const s = JSON.parse(sessionRaw);
+      sid = s.sid || '';
+      token = s.token || '';
+    } catch {
+      setIsListeningForPlayback(false);
+      return;
+    }
+
+    if (!sid || !token) {
+      setIsListeningForPlayback(false);
+      return;
+    }
+
+    // 创建SSE连接监听播放状态
+    const es = new EventSource(
+      `/api/remote/stream?sid=${encodeURIComponent(sid)}`
+    );
+
+    const onMessage = (ev: MessageEvent) => {
+      try {
+        const data = JSON.parse(ev.data);
+        const msg = data?.message || data;
+        if (!msg || msg.type !== 'status') return;
+
+        const payload = msg.payload || {};
+        const duration = payload.duration;
+        const currentTime = payload.currentTime;
+        const title = payload.title;
+
+        // 检测到播放器开始播放（有duration和currentTime，且title不为空）
+        if (
+          typeof duration === 'number' &&
+          duration > 0 &&
+          typeof currentTime === 'number' &&
+          currentTime > 0 &&
+          title
+        ) {
+          // 停止监听
+          es.close();
+          setIsListeningForPlayback(false);
+
+          // 清除超时定时器
+          if (playbackTimeout) {
+            clearTimeout(playbackTimeout);
+            setPlaybackTimeout(null);
+          }
+
+          // 跳转到controller页面
+          router.push('/controller');
+        }
+      } catch (error) {
+        // 静默处理错误
+      }
+    };
+
+    const onError = () => {
+      es.close();
+      setIsListeningForPlayback(false);
+    };
+
+    es.onmessage = onMessage;
+    es.onerror = onError;
+
+    // 设置超时，如果10秒内没有检测到播放，停止监听
+    const timeout = setTimeout(() => {
+      es.close();
+      setIsListeningForPlayback(false);
+    }, 10000);
+
+    setPlaybackTimeout(timeout);
+  }, [isController, isListeningForPlayback, playbackTimeout, router]);
+
+  // 处理继续观看视频点击
+  const handleVideoClick = (
+    source: string,
+    id: string,
+    title: string,
+    year: string,
+    type: 'tv' | 'movie'
+  ) => {
+    // 只有在遥控器角色且已连接时才发送遥控指令
+    if (isController && controllerStatus === 'connected') {
+      try {
+        send({
+          type: 'continueWatching',
+          payload: {
+            source,
+            id,
+            title,
+            year,
+            stype: type,
+          },
+        });
+
+        // 发送指令后开始监听播放状态
+        setTimeout(() => {
+          startListeningForPlayback();
+        }, 500); // 延迟500ms开始监听，给播放器一些时间响应
+      } catch (error) {
+        // 静默处理错误
+      }
+    }
+    // 如果不是遥控器角色或未连接，则执行本地逻辑（ContinueWatching组件会处理）
+  };
+
+  // 处理通用视频点击（用于热门电影、热门剧集等）
+  const handleGenericVideoClick = useCallback(
+    (videoData: {
+      source?: string;
+      id?: string;
+      title: string;
+      year: string;
+      type: 'tv' | 'movie';
+      from: 'playrecord' | 'favorite' | 'search' | 'douban';
+      douban_id?: string;
+    }) => {
+      // 只有在遥控器角色且已连接时才发送遥控指令
+      if (isController && controllerStatus === 'connected') {
+        try {
+          if (videoData.from === 'douban') {
+            // 豆瓣视频：发送搜索播放指令
+            send({
+              type: 'searchAndPlay',
+              payload: {
+                title: videoData.title,
+                year: videoData.year,
+                stype: videoData.type,
+              },
+            });
+
+            // 搜索需要更长时间，延迟2秒开始监听
+            setTimeout(() => {
+              startListeningForPlayback();
+            }, 2000);
+          } else if (videoData.source && videoData.id) {
+            // 有具体源和ID的视频：发送换源指令
+            send({
+              type: 'source',
+              payload: {
+                action: 'change',
+                source: videoData.source,
+                id: videoData.id,
+                title: videoData.title,
+                year: videoData.year,
+                stype: videoData.type,
+              },
+            });
+
+            // 换源相对较快，延迟500ms开始监听
+            setTimeout(() => {
+              startListeningForPlayback();
+            }, 500);
+          }
+        } catch (error) {
+          // 静默处理错误
+        }
+      }
+      // 如果不是遥控器角色或未连接，则执行本地逻辑（VideoCard会处理）
+    },
+    [isController, controllerStatus, send, startListeningForPlayback]
+  );
+
+  // 清理函数
+  useEffect(() => {
+    return () => {
+      // 组件卸载时清理定时器
+      if (playbackTimeout) {
+        clearTimeout(playbackTimeout);
+      }
+    };
+  }, [playbackTimeout]);
 
   // 检查公告弹窗状态
   useEffect(() => {
@@ -155,6 +400,49 @@ function HomeClient() {
     localStorage.setItem('hasSeenAnnouncement', announcement); // 记录已查看弹窗
   };
 
+  // 获取遥控器入口的样式和状态信息
+  const getControllerButtonInfo = () => {
+    if (!isController) {
+      return null; // 不是遥控器角色，不显示
+    }
+
+    switch (controllerStatus) {
+      case 'connected':
+        return {
+          className:
+            'inline-flex items-center gap-2 rounded-lg bg-green-100 hover:bg-green-200 dark:bg-green-900/30 dark:hover:bg-green-900/50 px-3 py-2 text-sm text-green-700 dark:text-green-300 transition-colors duration-200',
+          title: '遥控器已连接',
+          icon: '📱',
+          text: '已连接',
+        };
+      case 'checking':
+        return {
+          className:
+            'inline-flex items-center gap-2 rounded-lg bg-yellow-100 hover:bg-yellow-200 dark:bg-yellow-900/30 dark:hover:bg-yellow-900/50 px-3 py-2 text-sm text-yellow-700 dark:text-yellow-300 transition-colors duration-200',
+          title: '遥控器连接中...',
+          icon: '⏳',
+          text: '连接中',
+        };
+      case 'error':
+        return {
+          className:
+            'inline-flex items-center gap-2 rounded-lg bg-red-100 hover:bg-red-200 dark:bg-red-900/30 dark:hover:bg-red-900/50 px-3 py-2 text-sm text-red-700 dark:text-red-300 transition-colors duration-200',
+          title: '遥控器连接错误',
+          icon: '❌',
+          text: '连接错误',
+        };
+      case 'disconnected':
+      default:
+        return {
+          className:
+            'inline-flex items-center gap-2 rounded-lg bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 px-3 py-2 text-sm text-gray-700 dark:text-gray-300 transition-colors duration-200',
+          title: '遥控器未连接',
+          icon: '📱',
+          text: '未连接',
+        };
+    }
+  };
+
   return (
     <PageLayout>
       <div className='px-2 sm:px-10 py-4 sm:py-8 overflow-visible'>
@@ -169,15 +457,22 @@ function HomeClient() {
             onChange={(value) => setActiveTab(value as 'home' | 'favorites')}
           />
 
-          {/* 遥控器快速入口 */}
-          <Link
-            href='/controller'
-            className='inline-flex items-center gap-2 rounded-lg bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 px-3 py-2 text-sm text-gray-700 dark:text-gray-300 transition-colors duration-200'
-            title='遥控器模式'
-          >
-            <Smartphone className='w-4 h-4' />
-            <span className='hidden sm:inline'>遥控器</span>
-          </Link>
+          {/* 遥控器快速入口 - 仅在遥控器角色时显示 */}
+          {(() => {
+            const buttonInfo = getControllerButtonInfo();
+            if (!buttonInfo) return null;
+
+            return (
+              <Link
+                href='/controller'
+                className={buttonInfo.className}
+                title={buttonInfo.title}
+              >
+                <span className='text-lg'>{buttonInfo.icon}</span>
+                <span className='hidden sm:inline'>{buttonInfo.text}</span>
+              </Link>
+            );
+          })()}
         </div>
 
         <div className='max-w-[95%] mx-auto'>
@@ -222,7 +517,13 @@ function HomeClient() {
             // 首页视图
             <>
               {/* 继续观看 */}
-              <ContinueWatching />
+              <ContinueWatching
+                onVideoClick={
+                  isController && controllerStatus === 'connected'
+                    ? handleVideoClick
+                    : undefined
+                }
+              />
 
               {/* 热门电影 */}
               <section className='mb-8'>
@@ -266,6 +567,17 @@ function HomeClient() {
                             rate={movie.rate}
                             year={movie.year}
                             type='movie'
+                            onClick={
+                              isController && controllerStatus === 'connected'
+                                ? () =>
+                                    handleGenericVideoClick({
+                                      from: 'douban',
+                                      title: movie.title,
+                                      year: movie.year,
+                                      type: 'movie',
+                                    })
+                                : undefined
+                            }
                           />
                         </div>
                       ))}
@@ -313,6 +625,18 @@ function HomeClient() {
                             douban_id={show.id}
                             rate={show.rate}
                             year={show.year}
+                            type='tv'
+                            onClick={
+                              isController && controllerStatus === 'connected'
+                                ? () =>
+                                    handleGenericVideoClick({
+                                      from: 'douban',
+                                      title: show.title,
+                                      year: show.year,
+                                      type: 'tv',
+                                    })
+                                : undefined
+                            }
                           />
                         </div>
                       ))}
@@ -360,6 +684,18 @@ function HomeClient() {
                             douban_id={show.id}
                             rate={show.rate}
                             year={show.year}
+                            type='show'
+                            onClick={
+                              isController && controllerStatus === 'connected'
+                                ? () =>
+                                    handleGenericVideoClick({
+                                      from: 'douban',
+                                      title: show.title,
+                                      year: show.year,
+                                      type: 'tv',
+                                    })
+                                : undefined
+                            }
                           />
                         </div>
                       ))}

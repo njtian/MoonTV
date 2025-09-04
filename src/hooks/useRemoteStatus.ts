@@ -39,11 +39,62 @@ export function useRemoteStatus() {
       intervalRef.current = null;
     }
 
-    // 只有在播放器角色时才发送状态
-    if (currentRole !== RemoteRole.PLAYER) {
+    // 只有在播放器角色或遥控器角色时才发送状态/心跳
+    if (
+      currentRole !== RemoteRole.PLAYER &&
+      currentRole !== RemoteRole.CONTROLLER
+    ) {
       return;
     }
 
+    // 遥控器角色：发送心跳到subscribers API
+    if (currentRole === RemoteRole.CONTROLLER) {
+      const sendControllerHeartbeat = async () => {
+        try {
+          // Get session info from localStorage (controller uses localStorage)
+          const sessionRaw = window.localStorage.getItem(
+            'rc_controller_session'
+          );
+          if (!sessionRaw) return;
+
+          let sid = '';
+          let token = '';
+          try {
+            const s = JSON.parse(sessionRaw);
+            sid = s.sid || '';
+            token = s.token || '';
+          } catch {
+            return;
+          }
+
+          if (!sid || !token) return;
+
+          // 发送遥控器心跳，检查播放器状态
+          await fetch(
+            `/api/remote/subscribers?sid=${encodeURIComponent(
+              sid
+            )}&token=${encodeURIComponent(token)}&checkType=player`
+          );
+        } catch {
+          // Ignore errors
+        }
+      };
+
+      // Send initial heartbeat immediately
+      sendControllerHeartbeat();
+
+      // Send heartbeat every 5 seconds
+      intervalRef.current = setInterval(sendControllerHeartbeat, 5000);
+
+      return () => {
+        if (intervalRef.current) {
+          clearInterval(intervalRef.current);
+          intervalRef.current = null;
+        }
+      };
+    }
+
+    // 播放器角色：发送页面状态
     // Don't send status from controller page itself
     if (pathname === '/controller') {
       return;

@@ -31,6 +31,7 @@ export default function ControllerPage({
   const [status, setStatus] = React.useState<
     'idle' | 'checking' | 'waiting' | 'connected' | 'error'
   >('idle');
+  const [sseConnected, setSseConnected] = React.useState(false);
   const [pageStatus, setPageStatus] = React.useState<{
     page?: 'home' | 'play' | 'search' | 'detail' | 'other';
     pageTitle?: string;
@@ -326,79 +327,170 @@ export default function ControllerPage({
     if (!currentSid) return;
 
     let es: EventSource | null = null;
+    let reconnectTimer: NodeJS.Timeout | null = null;
+    let isReconnecting = false;
+    let connectionCheckTimer: NodeJS.Timeout | null = null;
 
-    try {
-      es = new EventSource(
-        `/api/remote/stream?sid=${encodeURIComponent(currentSid)}`
-      );
-
-      const onMsg = (ev: MessageEvent) => {
+    const createSSEConnection = () => {
+      // 关闭现有连接
+      if (es) {
         try {
-          const data = JSON.parse(ev.data);
-          const msg = data?.message || data;
-          if (!msg) return;
-          if (msg.type === 'status') {
-            // Handle page status
-            if (msg.payload?.page) {
-              setPageStatus({
-                page: msg.payload.page,
-                pageTitle: msg.payload.pageTitle,
-              });
+          es.close();
+        } catch (error) {
+          console.warn('关闭旧SSE连接失败:', error);
+        }
+      }
+
+      try {
+        es = new EventSource(
+          `/api/remote/stream?sid=${encodeURIComponent(currentSid)}`
+        );
+
+        const onMsg = (ev: MessageEvent) => {
+          try {
+            const data = JSON.parse(ev.data);
+            const msg = data?.message || data;
+            if (!msg) return;
+
+            // 重置重连标志
+            isReconnecting = false;
+            if (reconnectTimer) {
+              clearTimeout(reconnectTimer);
+              reconnectTimer = null;
             }
 
-            // Handle play page status
-            const d = msg.payload?.duration;
-            const ct = msg.payload?.currentTime;
-            if (typeof d === 'number') setDuration(d);
-            if (typeof ct === 'number' && !isSeeking) {
-              setCurrentTime(ct);
-              if (typeof d === 'number' && d > 0) {
-                setPercent(Math.round((ct / d) * 100));
+            if (msg.type === 'status') {
+              // Handle page status
+              if (msg.payload?.page) {
+                setPageStatus({
+                  page: msg.payload.page,
+                  pageTitle: msg.payload.pageTitle,
+                });
+              }
+
+              // Handle play page status
+              const d = msg.payload?.duration;
+              const ct = msg.payload?.currentTime;
+              if (typeof d === 'number') setDuration(d);
+              if (typeof ct === 'number' && !isSeeking) {
+                setCurrentTime(ct);
+                if (typeof d === 'number' && d > 0) {
+                  setPercent(Math.round((ct / d) * 100));
+                }
+              }
+              const title = msg.payload?.title;
+              const episodeIndex = msg.payload?.episodeIndex;
+              const totalEpisodes = msg.payload?.totalEpisodes;
+              const cover = msg.payload?.cover;
+              const currentSource = msg.payload?.currentSource;
+              const currentId = msg.payload?.currentId;
+              if (
+                title ||
+                episodeIndex ||
+                totalEpisodes ||
+                cover ||
+                currentSource ||
+                currentId
+              ) {
+                setMeta({
+                  title,
+                  episodeIndex,
+                  totalEpisodes,
+                  cover,
+                  currentSource,
+                  currentId,
+                });
               }
             }
-            const title = msg.payload?.title;
-            const episodeIndex = msg.payload?.episodeIndex;
-            const totalEpisodes = msg.payload?.totalEpisodes;
-            const cover = msg.payload?.cover;
-            const currentSource = msg.payload?.currentSource;
-            const currentId = msg.payload?.currentId;
-            if (
-              title ||
-              episodeIndex ||
-              totalEpisodes ||
-              cover ||
-              currentSource ||
-              currentId
-            ) {
-              setMeta({
-                title,
-                episodeIndex,
-                totalEpisodes,
-                cover,
-                currentSource,
-                currentId,
-              });
-            }
+          } catch (parseError) {
+            // eslint-disable-next-line no-console
+            console.warn('解析SSE消息失败:', parseError);
           }
-        } catch (parseError) {
+        };
+
+        const onError = (error: Event) => {
           // eslint-disable-next-line no-console
-          console.warn('解析SSE消息失败:', parseError);
-        }
-      };
+          console.warn('SSE连接错误:', error);
+          setSseConnected(false);
+          // 延迟重连，避免频繁重连
+          if (!isReconnecting) {
+            isReconnecting = true;
+            reconnectTimer = setTimeout(() => {
+              console.log('尝试重连SSE...');
+              createSSEConnection();
+            }, 3000);
+          }
+        };
 
-      const onError = (error: Event) => {
+        const onOpen = () => {
+          console.log('SSE连接已建立');
+          setSseConnected(true);
+          isReconnecting = false;
+          if (reconnectTimer) {
+            clearTimeout(reconnectTimer);
+            reconnectTimer = null;
+          }
+        };
+
+        es.onmessage = onMsg;
+        es.onerror = onError;
+        es.onopen = onOpen;
+      } catch (sseError) {
         // eslint-disable-next-line no-console
-        console.warn('SSE连接错误:', error);
-      };
+        console.warn('创建SSE连接失败:', sseError);
+      }
+    };
 
-      es.onmessage = onMsg;
-      es.onerror = onError;
-    } catch (sseError) {
-      // eslint-disable-next-line no-console
-      console.warn('创建SSE连接失败:', sseError);
-    }
+    // 页面可见性变化处理
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        console.log('页面变为可见，检查SSE连接状态');
+        // 页面重新可见时，检查SSE连接状态
+        if (!es || es.readyState === EventSource.CLOSED) {
+          console.log('SSE连接已断开，重新建立连接');
+          createSSEConnection();
+        }
+      }
+    };
+
+    // 网络状态变化处理
+    const handleOnline = () => {
+      console.log('网络已连接，检查SSE连接状态');
+      if (!es || es.readyState === EventSource.CLOSED) {
+        console.log('网络恢复，重新建立SSE连接');
+        createSSEConnection();
+      }
+    };
+
+    // 连接状态检查函数
+    const checkConnection = () => {
+      if (es && es.readyState === EventSource.CLOSED) {
+        console.log('检测到SSE连接已关闭，尝试重连');
+        createSSEConnection();
+      }
+    };
+
+    // 监听页面可见性变化
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    // 监听网络状态变化
+    window.addEventListener('online', handleOnline);
+
+    // 初始建立连接
+    createSSEConnection();
+
+    // 定期检查连接状态（每10秒检查一次）
+    connectionCheckTimer = setInterval(checkConnection, 10000);
 
     return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('online', handleOnline);
+
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+      }
+      if (connectionCheckTimer) {
+        clearInterval(connectionCheckTimer);
+      }
       if (es) {
         try {
           es.close();
@@ -429,12 +521,13 @@ export default function ControllerPage({
     if (status === 'checking') return '检查中...';
     if (status === 'waiting') return '等待连接';
     if (status === 'connected') {
-      if (pageStatus.page === 'play') return '播放页面';
-      if (pageStatus.page === 'home') return '首页';
-      if (pageStatus.page === 'search') return '搜索页面';
-      if (pageStatus.page === 'detail') return '详情页面';
-      if (pageStatus.page === 'other') return '其他页面';
-      return '已连接';
+      const sseStatus = sseConnected ? ' (实时)' : ' (离线)';
+      if (pageStatus.page === 'play') return `播放页面${sseStatus}`;
+      if (pageStatus.page === 'home') return `首页${sseStatus}`;
+      if (pageStatus.page === 'search') return `搜索页面${sseStatus}`;
+      if (pageStatus.page === 'detail') return `详情页面${sseStatus}`;
+      if (pageStatus.page === 'other') return `其他页面${sseStatus}`;
+      return `已连接${sseStatus}`;
     }
     if (status === 'idle') return '未连接';
     return status;

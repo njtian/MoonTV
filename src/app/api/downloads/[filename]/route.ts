@@ -45,7 +45,15 @@ export async function GET(
     // 创建文件流
     const fileStream = fs.createReadStream(filePath);
 
-    return new NextResponse(fileStream as ReadableStream, {
+    const webStream = new ReadableStream({
+      start(controller) {
+        fileStream.on('data', (chunk) => controller.enqueue(chunk));
+        fileStream.on('end', () => controller.close());
+        fileStream.on('error', (err) => controller.error(err));
+      },
+    });
+
+    return new NextResponse(webStream, {
       status: 200,
       headers,
     });

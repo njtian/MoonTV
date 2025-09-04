@@ -21,6 +21,12 @@ import {
   saveSkipConfig,
   subscribeToDataUpdates,
 } from '@/lib/db.client';
+import {
+  debugElectronAPI,
+  electronFullscreen,
+  hasElectronAPI,
+  isElectron,
+} from '@/lib/electron-compat';
 import { SearchResult } from '@/lib/types';
 import { getVideoResolutionFromM3u8, processImageUrl } from '@/lib/utils';
 import { RemoteRole, useRemoteRole } from '@/hooks/useRemoteRole';
@@ -92,6 +98,11 @@ function PlayPageClient() {
     skipConfig.intro_time,
     skipConfig.outro_time,
   ]);
+
+  // 调试Electron API状态
+  useEffect(() => {
+    debugElectronAPI();
+  }, []);
 
   // 跳过检查的时间间隔控制
   const lastSkipCheckRef = useRef(0);
@@ -957,7 +968,7 @@ function PlayPageClient() {
   useEffect(() => {
     document.addEventListener('keydown', handleKeyboardShortcuts);
     // Remote control event listener
-    const onRemote = (e: Event) => {
+    const onRemote = async (e: Event) => {
       try {
         const detail = (e as CustomEvent).detail;
         const msg = detail?.message || detail; // publish 包裹了 {message}
@@ -998,88 +1009,19 @@ function PlayPageClient() {
           }
           if (action === 'toggleFullscreen') {
             try {
-              if (artPlayerRef.current) {
-                // 智能全屏：先尝试原生全屏，失败后回退到网页全屏
-                if (
-                  !artPlayerRef.current.fullscreen &&
-                  !artPlayerRef.current.fullscreenWeb
-                ) {
-                  // 检查是否支持原生全屏
-                  const isFullscreenSupported =
-                    document.fullscreenEnabled ||
-                    (document as any).webkitFullscreenEnabled ||
-                    (document as any).mozFullScreenEnabled ||
-                    (document as any).msFullscreenEnabled;
-
-                  if (isFullscreenSupported) {
-                    // 尝试原生全屏
-                    try {
-                      artPlayerRef.current.fullscreen = true;
-                      // 使用setTimeout检查全屏是否成功
-                      setTimeout(() => {
-                        if (!artPlayerRef.current?.fullscreen) {
-                          // 原生全屏失败，回退到网页全屏
-                          console.warn('原生全屏失败，回退到网页全屏');
-
-                          if (artPlayerRef.current) {
-                            artPlayerRef.current.fullscreenWeb = true;
-                            showRemoteHint('⛶ 网页全屏');
-                          }
-                        } else {
-                          showRemoteHint('🖥 全屏');
-                        }
-                      }, 100);
-                    } catch (nativeError) {
-                      console.warn(
-                        '原生全屏失败，回退到网页全屏:',
-                        nativeError
-                      );
-
-                      // 回退到网页全屏
-                      artPlayerRef.current.fullscreenWeb = true;
-                      showRemoteHint('⛶ 网页全屏');
-                    }
-                  } else {
-                    // 不支持原生全屏，直接使用网页全屏
-                    artPlayerRef.current.fullscreenWeb = true;
-                    showRemoteHint('⛶ 网页全屏');
-                  }
-                } else {
-                  // 如果已经在全屏状态，则退出
-                  if (artPlayerRef.current.fullscreen) {
-                    artPlayerRef.current.fullscreen = false;
-                    showRemoteHint('🗗 退出全屏');
-                  } else if (artPlayerRef.current.fullscreenWeb) {
-                    artPlayerRef.current.fullscreenWeb = false;
-                    showRemoteHint('🗗 退出网页全屏');
-                  }
-                }
+              const success = await toggleFullscreen();
+              if (!success) {
+                console.warn('切换全屏状态失败');
               }
             } catch (error) {
               console.warn('全屏操作失败:', error);
-
-              // 发生错误时，尝试使用网页全屏作为备选方案
-              if (artPlayerRef.current && !artPlayerRef.current.fullscreenWeb) {
-                try {
-                  artPlayerRef.current.fullscreenWeb = true;
-                  showRemoteHint('⛶ 网页全屏');
-                } catch (fallbackError) {
-                  console.warn('网页全屏也失败:', fallbackError);
-                }
-              }
             }
           }
           if (action === 'exitFullscreen') {
             try {
-              if (artPlayerRef.current) {
-                // 智能退出全屏：根据当前状态选择退出方式
-                if (artPlayerRef.current.fullscreen) {
-                  artPlayerRef.current.fullscreen = false;
-                  showRemoteHint('🗗 退出全屏');
-                } else if (artPlayerRef.current.fullscreenWeb) {
-                  artPlayerRef.current.fullscreenWeb = false;
-                  showRemoteHint('🗗 退出网页全屏');
-                }
+              const success = await exitFullscreen();
+              if (!success) {
+                console.warn('退出全屏失败');
               }
             } catch (error) {
               console.warn('退出全屏失败:', error);
@@ -1298,6 +1240,169 @@ function PlayPageClient() {
   // ---------------------------------------------------------------------------
   // 播放器角色自动全屏
   // ---------------------------------------------------------------------------
+
+  // 智能全屏方法：优先尝试Electron全屏，然后原生全屏，最后回退到网页全屏
+  const performSmartFullscreen = async (video: any): Promise<boolean> => {
+    try {
+      // 检查是否已经在全屏状态
+      if (video.fullscreen || video.fullscreenWeb) {
+        console.log('已经在全屏状态，跳过自动全屏');
+        return true;
+      }
+
+      // 优先尝试Electron全屏（如果在Electron环境中）
+      if (isElectron && hasElectronAPI) {
+        try {
+          console.log('尝试Electron全屏...');
+          const success = await electronFullscreen.setFullScreen(true);
+          if (success) {
+            showRemoteHint('🖥 Electron全屏');
+            return true;
+          }
+        } catch (error) {
+          console.log('Electron全屏失败，回退到浏览器全屏:', error);
+        }
+      }
+
+      // 检查浏览器全屏支持
+      const isFullscreenSupported =
+        document.fullscreenEnabled ||
+        (document as any).webkitFullscreenEnabled ||
+        (document as any).mozFullScreenEnabled ||
+        (document as any).msFullscreenEnabled;
+
+      console.log('全屏支持检查:', { isFullscreenSupported });
+
+      if (isFullscreenSupported) {
+        try {
+          // 尝试原生全屏
+          video.fullscreen = true;
+          console.log('尝试原生全屏...');
+          showRemoteHint('🖥 自动全屏');
+          return true;
+        } catch (error) {
+          console.log('原生全屏失败，回退到网页全屏:', error);
+          // 原生全屏失败，回退到网页全屏
+          video.fullscreenWeb = true;
+          showRemoteHint('⛶ 自动网页全屏');
+          return true;
+        }
+      } else {
+        console.log('不支持原生全屏，使用网页全屏');
+        // 不支持原生全屏，直接使用网页全屏
+        video.fullscreenWeb = true;
+        showRemoteHint('⛶ 自动网页全屏');
+        return true;
+      }
+    } catch (error) {
+      console.warn('智能全屏执行失败:', error);
+      return false;
+    }
+  };
+
+  // 退出全屏方法
+  const exitFullscreen = async (): Promise<boolean> => {
+    if (!artPlayerRef.current) {
+      console.log('播放器未准备好');
+      return false;
+    }
+
+    const video = artPlayerRef.current;
+
+    try {
+      // 优先尝试Electron全屏退出（如果在Electron环境中）
+      if (isElectron && hasElectronAPI) {
+        try {
+          const isElectronFullscreen = await electronFullscreen.isFullScreen();
+          if (isElectronFullscreen) {
+            console.log('退出Electron全屏...');
+            const success = await electronFullscreen.setFullScreen(false);
+            if (success) {
+              showRemoteHint('🗗 退出Electron全屏');
+              return true;
+            }
+          }
+        } catch (error) {
+          console.log('Electron全屏退出失败，尝试浏览器全屏退出:', error);
+        }
+      }
+
+      // 根据当前状态选择退出方式
+      if (video.fullscreen) {
+        video.fullscreen = false;
+        showRemoteHint('🗗 退出全屏');
+        console.log('退出原生全屏');
+        return true;
+      } else if (video.fullscreenWeb) {
+        video.fullscreenWeb = false;
+        showRemoteHint('🗗 退出网页全屏');
+        console.log('退出网页全屏');
+        return true;
+      } else {
+        console.log('当前不在全屏状态');
+        return false;
+      }
+    } catch (error) {
+      console.warn('退出全屏失败:', error);
+      return false;
+    }
+  };
+
+  // 切换全屏状态（用于遥控器指令）
+  const toggleFullscreen = async (): Promise<boolean> => {
+    if (!artPlayerRef.current) {
+      console.log('播放器未准备好');
+      return false;
+    }
+
+    const video = artPlayerRef.current;
+
+    // 如果已经在全屏状态，则立即退出
+    if (video.fullscreen || video.fullscreenWeb) {
+      return await exitFullscreen();
+    } else {
+      // 如果不在全屏状态，延迟执行进入全屏，确保播放器完全准备好
+      console.log('遥控器全屏指令，延迟执行...');
+      setTimeout(async () => {
+        if (
+          artPlayerRef.current &&
+          !artPlayerRef.current.fullscreen &&
+          !artPlayerRef.current.fullscreenWeb
+        ) {
+          console.log('延迟执行全屏操作...');
+          await performSmartFullscreen(artPlayerRef.current);
+        } else {
+          console.log('播放器状态已变化，跳过延迟全屏');
+        }
+      }, 500);
+      return true; // 表示指令已接收并开始处理
+    }
+  };
+
+  // 执行自动全屏
+  const executeAutoFullscreen = async () => {
+    if (!artPlayerRef.current) {
+      console.log('播放器未准备好');
+      return;
+    }
+
+    const video = artPlayerRef.current;
+
+    // 检查是否已经有视频内容
+    if (video.duration <= 0) {
+      console.log('视频未加载完成，跳过自动全屏');
+      return;
+    }
+
+    console.log('视频已加载，开始自动全屏...');
+
+    // 标记已触发，防止重复触发
+    setAutoFullscreenTriggered(true);
+
+    // 执行智能全屏
+    await performSmartFullscreen(video);
+  };
+
   // 播放器角色自动全屏逻辑
   useEffect(() => {
     console.log('自动全屏检查:', {
@@ -1325,52 +1430,7 @@ function PlayPageClient() {
         });
 
         if (artPlayerRef.current && !autoFullscreenTriggered) {
-          const video = artPlayerRef.current;
-
-          // 检查是否已经有视频内容
-          if (video.duration > 0) {
-            console.log('视频已加载，开始自动全屏...');
-
-            // 标记已触发，防止重复触发
-            setAutoFullscreenTriggered(true);
-
-            try {
-              // 智能全屏：先尝试原生全屏，失败后回退到网页全屏
-              if (!video.fullscreen && !video.fullscreenWeb) {
-                const isFullscreenSupported =
-                  document.fullscreenEnabled ||
-                  (document as any).webkitFullscreenEnabled ||
-                  (document as any).mozFullScreenEnabled ||
-                  (document as any).msFullscreenEnabled;
-
-                console.log('全屏支持检查:', { isFullscreenSupported });
-
-                if (isFullscreenSupported) {
-                  try {
-                    video.fullscreen = true;
-                    console.log('尝试原生全屏...');
-                    showRemoteHint('🖥 自动全屏');
-                  } catch (error) {
-                    console.log('原生全屏失败，回退到网页全屏:', error);
-                    // 原生全屏失败，回退到网页全屏
-                    video.fullscreenWeb = true;
-                    showRemoteHint('⛶ 自动网页全屏');
-                  }
-                } else {
-                  console.log('不支持原生全屏，使用网页全屏');
-                  // 不支持原生全屏，直接使用网页全屏
-                  video.fullscreenWeb = true;
-                  showRemoteHint('⛶ 自动网页全屏');
-                }
-              } else {
-                console.log('已经在全屏状态，跳过自动全屏');
-              }
-            } catch (error) {
-              console.warn('自动全屏失败:', error);
-            }
-          } else {
-            console.log('视频未加载完成，跳过自动全屏');
-          }
+          executeAutoFullscreen();
         } else {
           console.log('播放器未准备好或已触发过自动全屏');
         }

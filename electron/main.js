@@ -1,4 +1,11 @@
-const { app, BrowserWindow, Menu, shell, screen } = require('electron');
+const {
+  app,
+  BrowserWindow,
+  Menu,
+  shell,
+  screen,
+  ipcMain,
+} = require('electron');
 const path = require('path');
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -146,11 +153,14 @@ function createWindow() {
       enableRemoteModule: false,
       webSecurity: true,
       sandbox: false, // 禁用沙盒模式以支持 root 用户运行
+      preload: path.join(__dirname, 'preload.js'), // 添加预加载脚本
     },
     icon: path.join(__dirname, '../public/icons/icon-512x512.png'),
     titleBarStyle: 'default',
     show: false, // 先不显示，等加载完成后再显示
     center: !hasSavedState, // 如果没有保存的位置，则居中显示
+    fullscreenable: true, // 允许全屏
+    fullscreen: false, // 默认不全屏
   });
 
   // 加载服务器URL
@@ -346,6 +356,79 @@ app.on('web-contents-created', (event, contents) => {
 
 // 处理协议（可选）
 app.setAsDefaultProtocolClient('moontv');
+
+// IPC处理程序 - 窗口控制
+ipcMain.handle('window:minimize', () => {
+  if (mainWindow) {
+    mainWindow.minimize();
+  }
+});
+
+ipcMain.handle('window:maximize', () => {
+  if (mainWindow) {
+    if (mainWindow.isMaximized()) {
+      mainWindow.unmaximize();
+    } else {
+      mainWindow.maximize();
+    }
+  }
+});
+
+ipcMain.handle('window:close', () => {
+  if (mainWindow) {
+    mainWindow.close();
+  }
+});
+
+ipcMain.handle('window:isMaximized', () => {
+  return mainWindow ? mainWindow.isMaximized() : false;
+});
+
+// IPC处理程序 - 全屏控制
+ipcMain.handle('window:setFullScreen', (event, fullscreen) => {
+  if (mainWindow) {
+    mainWindow.setFullScreen(fullscreen);
+    return true;
+  }
+  return false;
+});
+
+ipcMain.handle('window:isFullScreen', () => {
+  return mainWindow ? mainWindow.isFullScreen() : false;
+});
+
+ipcMain.handle('window:toggleFullScreen', () => {
+  if (mainWindow) {
+    const isFullScreen = mainWindow.isFullScreen();
+    mainWindow.setFullScreen(!isFullScreen);
+    return !isFullScreen;
+  }
+  return false;
+});
+
+// IPC处理程序 - 应用信息
+ipcMain.handle('app:getName', () => {
+  return app.getName();
+});
+
+ipcMain.handle('app:getVersion', () => {
+  return app.getVersion();
+});
+
+// IPC处理程序 - 系统信息
+ipcMain.handle('system:getMemoryUsage', () => {
+  return process.memoryUsage();
+});
+
+ipcMain.handle('system:getCPUUsage', async () => {
+  const cpuUsage = await process.cpuUsage();
+  return cpuUsage;
+});
+
+// 监听渲染进程准备就绪事件
+ipcMain.on('renderer:ready', () => {
+  console.log('渲染进程已准备就绪');
+});
 
 // 导出窗口实例（用于其他模块访问）
 module.exports = { mainWindow };

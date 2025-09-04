@@ -1,5 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+console.log('Preload script loaded');
+
 // 暴露安全的API给渲染进程
 contextBridge.exposeInMainWorld('electronAPI', {
   // 平台信息
@@ -24,6 +26,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     maximize: () => ipcRenderer.invoke('window:maximize'),
     close: () => ipcRenderer.invoke('window:close'),
     isMaximized: () => ipcRenderer.invoke('window:isMaximized'),
+    // 全屏控制
+    setFullScreen: (fullscreen) =>
+      ipcRenderer.invoke('window:setFullScreen', fullscreen),
+    isFullScreen: () => ipcRenderer.invoke('window:isFullScreen'),
+    toggleFullScreen: () => ipcRenderer.invoke('window:toggleFullScreen'),
   },
 
   // 系统信息
@@ -59,17 +66,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 });
 
+console.log('electronAPI exposed to main world');
+
 // 在页面加载完成后执行
 window.addEventListener('DOMContentLoaded', () => {
+  console.log('DOMContentLoaded event fired');
+  console.log('window.electronAPI available:', !!window.electronAPI);
+
   // 检测是否在Electron环境中
   const isElectron = window.navigator.userAgent.includes('Electron');
+  console.log('isElectron detected:', isElectron);
 
   if (isElectron) {
     // 添加Electron标识类到body
     document.body.classList.add('electron-app');
 
     // 可以在这里添加Electron特有的初始化逻辑
-    // console.log('MoonTV running in Electron environment');
+    console.log('MoonTV running in Electron environment');
 
     // 通知主进程页面已准备就绪
     ipcRenderer.send('renderer:ready');

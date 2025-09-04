@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, shell } = require('electron');
+const { app, BrowserWindow, Menu, shell, screen } = require('electron');
 const path = require('path');
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -8,13 +8,138 @@ let mainWindow;
 // 服务器配置
 const SERVER_URL = process.env.SERVER_URL || 'http://localhost:3000';
 
+// 窗口状态管理
+let windowState = {
+  width: undefined,
+  height: undefined,
+  x: undefined,
+  y: undefined,
+  isMaximized: false,
+};
+
+// 防抖定时器
+let saveStateTimer = null;
+
+// 获取屏幕尺寸并计算合适的窗口大小
+function getOptimalWindowSize() {
+  const primaryDisplay = screen.getPrimaryDisplay();
+
+  // 使用主显示器的工作区域
+  const { width: screenWidth, height: screenHeight } =
+    primaryDisplay.workAreaSize;
+
+  // 使用100%的可视区域大小
+  let scaleFactor = 1.0; // 占满整个可视区域
+
+  // 计算窗口大小 - 占满整个可视区域
+  const optimalWidth = Math.floor(screenWidth * scaleFactor);
+  const optimalHeight = Math.floor(screenHeight * scaleFactor);
+
+  // 确保不小于最小尺寸
+  const finalWidth = Math.max(optimalWidth, 800);
+  const finalHeight = Math.max(optimalHeight, 600);
+
+  // 计算窗口位置 - 占满整个可视区域时从左上角开始
+  const x = 0;
+  const y = 0;
+
+  return {
+    width: finalWidth,
+    height: finalHeight,
+    x: Math.max(0, x), // 确保不超出屏幕边界
+    y: Math.max(0, y),
+  };
+}
+
+// 保存窗口状态（防抖版本）
+function saveWindowState() {
+  if (mainWindow) {
+    const bounds = mainWindow.getBounds();
+    windowState.width = bounds.width;
+    windowState.height = bounds.height;
+    windowState.x = bounds.x;
+    windowState.y = bounds.y;
+    windowState.isMaximized = mainWindow.isMaximized();
+  }
+}
+
+// 防抖保存窗口状态
+function debouncedSaveWindowState() {
+  if (saveStateTimer) {
+    clearTimeout(saveStateTimer);
+  }
+  saveStateTimer = setTimeout(() => {
+    saveWindowState();
+  }, 500); // 500ms 防抖
+}
+
 function createWindow() {
+  // 获取最优窗口尺寸
+  const optimalSize = getOptimalWindowSize();
+
+  // 确定是否使用保存的窗口状态
+  const hasSavedState =
+    windowState.width !== undefined && windowState.height !== undefined;
+
+  // 调试信息（开发时启用）
+  if (isDev) {
+    console.log('屏幕信息:', screen.getPrimaryDisplay().workAreaSize);
+    console.log('计算的最优窗口尺寸:', optimalSize);
+    console.log('当前窗口状态:', windowState);
+    console.log('是否有保存的状态:', hasSavedState);
+  }
+
+  // 验证窗口位置是否在屏幕范围内
+  function validateWindowBounds(bounds, screenBounds) {
+    const { width, height, x, y } = bounds;
+    const { width: screenWidth, height: screenHeight } = screenBounds;
+
+    // 确保窗口不超出屏幕边界
+    const validX = Math.max(0, Math.min(x, screenWidth - width));
+    const validY = Math.max(0, Math.min(y, screenHeight - height));
+
+    return {
+      width: Math.min(width, screenWidth),
+      height: Math.min(height, screenHeight),
+      x: validX,
+      y: validY,
+    };
+  }
+
+  // 获取当前屏幕边界
+  const currentScreen = screen.getDisplayNearestPoint(
+    windowState.x !== undefined
+      ? { x: windowState.x, y: windowState.y }
+      : optimalSize
+  );
+  const screenBounds = currentScreen.workAreaSize;
+
+  // 验证窗口边界
+  const validatedBounds = validateWindowBounds(
+    {
+      width: hasSavedState ? windowState.width : optimalSize.width,
+      height: hasSavedState ? windowState.height : optimalSize.height,
+      x: hasSavedState ? windowState.x : optimalSize.x,
+      y: hasSavedState ? windowState.y : optimalSize.y,
+    },
+    screenBounds
+  );
+
+  // 调试信息（开发时启用）
+  if (isDev) {
+    console.log('验证后的窗口边界:', validatedBounds);
+  }
+
   // 创建浏览器窗口
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    width: validatedBounds.width,
+    height: validatedBounds.height,
+    x: validatedBounds.x,
+    y: validatedBounds.y,
     minWidth: 800,
     minHeight: 600,
+    maxWidth: screenBounds.width,
+    maxHeight: screenBounds.height,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -25,6 +150,7 @@ function createWindow() {
     icon: path.join(__dirname, '../public/icons/icon-512x512.png'),
     titleBarStyle: 'default',
     show: false, // 先不显示，等加载完成后再显示
+    center: !hasSavedState, // 如果没有保存的位置，则居中显示
   });
 
   // 加载服务器URL
@@ -32,12 +158,39 @@ function createWindow() {
 
   // 窗口加载完成后显示
   mainWindow.once('ready-to-show', () => {
+    // 确保窗口大小正确
+    if (!hasSavedState) {
+      mainWindow.setBounds(validatedBounds);
+    }
+
+    // 如果之前是最大化状态，则恢复最大化
+    if (windowState.isMaximized) {
+      mainWindow.maximize();
+    }
+
     mainWindow.show();
 
     // 开发环境下打开开发者工具
     if (isDev) {
       mainWindow.webContents.openDevTools();
     }
+  });
+
+  // 监听窗口大小和位置变化（使用防抖）
+  mainWindow.on('resize', () => {
+    debouncedSaveWindowState();
+  });
+
+  mainWindow.on('move', () => {
+    debouncedSaveWindowState();
+  });
+
+  mainWindow.on('maximize', () => {
+    saveWindowState(); // 最大化/取消最大化立即保存
+  });
+
+  mainWindow.on('unmaximize', () => {
+    saveWindowState(); // 最大化/取消最大化立即保存
   });
 
   // 当窗口被关闭时触发
@@ -160,10 +313,18 @@ app.whenReady().then(createWindow);
 
 // 当所有窗口都被关闭时退出应用
 app.on('window-all-closed', () => {
+  // 保存窗口状态
+  saveWindowState();
+
   // 在 macOS 上，应用和菜单栏通常会保持活跃状态，直到用户使用 Cmd + Q 明确退出
   if (process.platform !== 'darwin') {
     app.quit();
   }
+});
+
+// 应用即将退出时保存窗口状态
+app.on('before-quit', () => {
+  saveWindowState();
 });
 
 app.on('activate', () => {

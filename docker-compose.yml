@@ -3,6 +3,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.simple
+      args:
+        - VERSION=${VERSION:-20250904082546}
     container_name: moontv
     restart: unless-stopped
     ports:
@@ -16,7 +18,12 @@ services:
       - SITE_NAME=MoonTV
       - ANNOUNCEMENT=本网站仅提供影视信息搜索服务，所有内容均来自第三方网站。本站不存储任何视频资源，不对任何内容的准确性、合法性、完整性负责。
       - REMOTE_ORIGIN_CHECK=off
+      - APP_VERSION=${VERSION:-20250904082546}
     volumes:
       - ./config.json:/app/config.json:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    labels:
+      - "com.moontv.version=${VERSION:-20250904082546}"
+      - "com.moontv.description=MoonTV - 影视信息搜索服务"
+      - "com.moontv.maintainer=MoonTV Team"

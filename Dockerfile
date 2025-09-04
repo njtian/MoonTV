@@ -1,6 +1,9 @@
 # ---- 第 1 阶段：安装依赖 ----
 FROM node:20-alpine AS deps
 
+# 接受版本参数
+ARG VERSION=latest
+
 # 启用 corepack 并激活 pnpm（Node20 默认提供 corepack）
 RUN corepack enable
 
@@ -37,6 +40,9 @@ RUN npm run build
 # ---- 第 3 阶段：生成运行时镜像 ----
 FROM node:20-alpine AS runner
 
+# 接受版本参数
+ARG VERSION=latest
+
 # 创建非 root 用户
 RUN addgroup -g 1001 -S nodejs && adduser -u 1001 -S nextjs -G nodejs
 
@@ -45,6 +51,12 @@ ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3001
 ENV DOCKER_ENV=true
+ENV APP_VERSION=${VERSION}
+
+# 添加版本标签
+LABEL version="${VERSION}"
+LABEL maintainer="MoonTV Team"
+LABEL description="MoonTV - 影视信息搜索服务"
 
 # 从构建器中复制 standalone 输出
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./

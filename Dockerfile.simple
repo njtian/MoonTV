@@ -1,6 +1,9 @@
 # 使用本地构建的简化Dockerfile
 FROM node:20-alpine AS runner
 
+# 接受版本参数
+ARG VERSION=latest
+
 # 创建非 root 用户
 RUN addgroup -g 1001 -S nodejs && adduser -u 1001 -S nextjs -G nodejs
 
@@ -9,6 +12,12 @@ ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3001
 ENV DOCKER_ENV=true
+ENV APP_VERSION=${VERSION}
+
+# 添加版本标签
+LABEL version="${VERSION}"
+LABEL maintainer="MoonTV Team"
+LABEL description="MoonTV - 影视信息搜索服务"
 
 # 复制构建好的文件
 COPY --chown=nextjs:nodejs .next/server ./.next/server

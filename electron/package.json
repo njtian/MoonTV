@@ -1,0 +1,82 @@
+{
+  "name": "moontv-electron",
+  "version": "1.0.0",
+  "description": "MoonTV Electron Client",
+  "main": "main.js",
+  "private": true,
+  "author": "MoonTV Team",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --publish=never"
+  },
+  "dependencies": {
+    "electron-updater": "^6.1.7"
+  },
+  "devDependencies": {
+    "electron": "38.0.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.moontv.app",
+    "productName": "MoonTV",
+    "directories": {
+      "output": "../dist-electron"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "config.js",
+      "debug-network.js",
+      "../public/icons/icon.icns"
+    ],
+    "asar": false,
+    "disableDefaultIgnoredFiles": true,
+    "mac": {
+      "category": "public.app-category.entertainment",
+      "icon": "../public/icons/icon.icns",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "../build/entitlements.mac.plist",
+      "entitlementsInherit": "../build/entitlements.mac.plist",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "dir",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "win": {
+      "icon": "../public/icons/icon-512x512.png"
+    },
+    "linux": {
+      "icon": "../public/icons/icon-512x512.png"
+    },
+    "dmg": {
+      "title": "MoonTV",
+      "icon": "../public/icons/icon.icns",
+      "background": "../public/icons/icon-512x512.png",
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    }
+  }
+}

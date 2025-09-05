@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 
 import { getAvailableApiSites, getCacheTime } from '@/lib/config';
 
-export const runtime = 'edge';
+// export const runtime = 'edge'; // 暂时禁用，因为需要访问数据库
 
 // OrionTV 兼容接口
 export async function GET() {

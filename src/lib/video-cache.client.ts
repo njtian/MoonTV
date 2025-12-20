@@ -7,10 +7,23 @@ import {
   CacheStats,
   ClearOptions,
   ClearResult,
+  DownloadedItem,
   DownloadOptions,
   DownloadStatus,
-  DownloadedItem,
 } from './video-cache.types';
+
+/**
+ * In-flight request coalescing for download list.
+ * No TTL caching: once the request resolves/rejects, the entry is removed.
+ */
+const inFlightDownloadedList = new Map<
+  string,
+  Promise<{
+    total_downloaded: number;
+    total_size_mb: number;
+    downloads: DownloadedItem[];
+  }>
+>();
 
 /**
  * 通知服务器播放成功，更新缓存
@@ -219,14 +232,24 @@ export async function getDownloadedList(seriesKey?: string): Promise<{
     ? `/api/download/list?series_key=${seriesKey}`
     : '/api/download/list';
 
-  const response = await fetch(url);
+  const existing = inFlightDownloadedList.get(url);
+  if (existing) return existing;
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: '未知错误' }));
-    throw new Error(error.error || '获取下载列表失败');
-  }
+  const promise = (async () => {
+    const response = await fetch(url);
 
-  return response.json();
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: '未知错误' }));
+      throw new Error(error.error || '获取下载列表失败');
+    }
+
+    return response.json();
+  })().finally(() => {
+    inFlightDownloadedList.delete(url);
+  });
+
+  inFlightDownloadedList.set(url, promise);
+  return promise;
 }
 
 /**

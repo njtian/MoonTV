@@ -447,6 +447,8 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
                         url={episodeUrl}
                         title={videoTitle || ''}
                         episodeTitle={`第${episodeNumber}集`}
+                        downloaded={isDownloaded}
+                        autoCheck={false}
                         size="sm"
                         className="bg-white dark:bg-gray-800 rounded-full shadow-md"
                       />

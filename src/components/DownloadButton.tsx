@@ -12,6 +12,7 @@ import {
   getAllActiveTasks,
 } from '@/lib/video-cache.client';
 import { DownloadStatus } from '@/lib/video-cache.types';
+import { useDownloadStatusSafe } from '@/components/DownloadStatusProvider';
 
 interface DownloadButtonProps {
   seriesKey: string;
@@ -22,6 +23,17 @@ interface DownloadButtonProps {
   episodeTitle: string;
   className?: string;
   size?: 'sm' | 'md' | 'lg';
+  /**
+   * Optional hint from parent to avoid expensive per-button network checks.
+   * When provided (e.g. from a shared downloadedEpisodes Set), we can skip
+   * calling /api/download/list for every visible episode button.
+   */
+  downloaded?: boolean;
+  /**
+   * If false, do not auto-check server state on mount (no network).
+   * Parent can still keep UI correct via `downloaded` and user interactions.
+   */
+  autoCheck?: boolean;
 }
 
 type DownloadState =
@@ -41,7 +53,12 @@ export default function DownloadButton({
   episodeTitle,
   className = '',
   size = 'sm',
+  downloaded,
+  autoCheck = true,
 }: DownloadButtonProps) {
+  // 尝试使用 Context（如果可用，返回 null 如果不在 Provider 中）
+  const downloadStatusContext = useDownloadStatusSafe();
+
   const [state, setState] = useState<DownloadState>('idle');
   const [progress, setProgress] = useState(0);
   const [downloadSpeed, setDownloadSpeed] = useState(0);
@@ -53,11 +70,80 @@ export default function DownloadButton({
   const statusIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const deleteTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isMountedRef = useRef(true);
+  
+  // 从 Context 获取任务状态
+  const taskStatus = downloadStatusContext
+    ? downloadStatusContext.getTaskStatus(seriesKey, episodeIndex)
+    : null;
+
+  // 监听 Context 中的任务状态变化
+  useEffect(() => {
+    if (!downloadStatusContext) {
+      return;
+    }
+
+    if (!taskStatus) {
+      // 如果 Context 中没有任务状态，但当前状态是下载中，可能需要重置
+      // 不过为了避免覆盖其他状态，这里不做处理
+      return;
+    }
+
+    // 如果 Context 中有任务状态，更新组件状态
+    if (taskStatus.status === 'pending' || taskStatus.status === 'downloading') {
+      setTaskId(taskStatus.task_id);
+      setState('downloading');
+      setProgress(taskStatus.progress);
+      setDownloadSpeed(taskStatus.download_speed_mbps);
+      setHasPartial(false);
+      setPendingDelete(false);
+      setError(taskStatus.error || null);
+    } else if (taskStatus.status === 'completed') {
+      setState('completed');
+      setProgress(100);
+      setPendingDelete(false);
+      setHasPartial(false);
+      setError(null);
+    } else if (taskStatus.status === 'cancelled') {
+      setState('cancelled');
+      setPendingDelete(false);
+      setError(null);
+    } else if (taskStatus.status === 'failed') {
+      setState('failed');
+      setError(taskStatus.error || '下载失败');
+      setPendingDelete(false);
+    }
+  }, [
+    taskStatus?.task_id,
+    taskStatus?.status,
+    taskStatus?.progress,
+    taskStatus?.download_speed_mbps,
+    taskStatus?.error,
+    downloadStatusContext,
+  ]);
 
   useEffect(() => {
     isMountedRef.current = true;
-    // 检查是否已下载
-    checkDownloaded();
+    if (!autoCheck) {
+      // Avoid any network calls on mount (e.g. in episode grids with many buttons).
+      // 但如果 Context 中有任务状态，上面的 useEffect 会处理
+      if (downloaded) {
+        setState('completed');
+        setPendingDelete(false);
+        setHasPartial(false);
+      } else if (!downloadStatusContext || !taskStatus) {
+        // 只有在没有 Context 或 Context 中没有任务状态时才设置为 idle
+        setState('idle');
+        setPendingDelete(false);
+      }
+    } else if (downloaded) {
+      // Parent already knows it's downloaded; avoid per-button list fetch.
+      setState('completed');
+      setPendingDelete(false);
+      setHasPartial(false);
+    } else {
+      // 检查是否已下载
+      checkDownloaded();
+    }
     return () => {
       isMountedRef.current = false;
       if (statusIntervalRef.current) {
@@ -69,7 +155,7 @@ export default function DownloadButton({
         deleteTimeoutRef.current = null;
       }
     };
-  }, [seriesKey, episodeIndex]);
+  }, [seriesKey, episodeIndex, downloaded, autoCheck]);
 
   const checkDownloaded = async () => {
     try {
@@ -91,8 +177,13 @@ export default function DownloadButton({
           setDownloadSpeed(activeTask.download_speed_mbps);
           setHasPartial(false);
           setPendingDelete(false);
-          // 开始轮询任务状态
-          startPolling(activeTask.task_id);
+          
+          // 如果使用 Context，刷新状态；否则启动独立轮询
+          if (downloadStatusContext) {
+            await downloadStatusContext.refresh();
+          } else {
+            startPolling(activeTask.task_id);
+          }
           return;
         }
       } catch (error) {
@@ -167,7 +258,13 @@ export default function DownloadButton({
       setTaskId(result.task_id);
       setState('downloading');
       setHasPartial(false); // 开始下载后重置部分下载状态
-      startPolling(result.task_id);
+      
+      // 如果使用 Context，刷新状态；否则启动独立轮询
+      if (downloadStatusContext) {
+        await downloadStatusContext.refresh();
+      } else {
+        startPolling(result.task_id);
+      }
     } catch (error) {
       console.error('开始下载失败:', error);
       const errorMessage = (error as Error).message || '下载失败';
@@ -204,7 +301,13 @@ export default function DownloadButton({
     }
   };
 
+  // 独立轮询逻辑（仅在未使用 Context 时使用）
   const startPolling = (tid: string) => {
+    // 如果使用 Context，不需要独立轮询
+    if (downloadStatusContext) {
+      return;
+    }
+
     if (statusIntervalRef.current) {
       clearInterval(statusIntervalRef.current);
     }
@@ -307,7 +410,13 @@ export default function DownloadButton({
         setError(null);
         setTaskId(null);
         setHasPartial(false); // 重置部分下载状态
-        await checkDownloaded();
+        
+        // 如果使用 Context，刷新状态；否则检查下载状态
+        if (downloadStatusContext) {
+          await downloadStatusContext.refresh();
+        } else {
+          await checkDownloaded();
+        }
       } catch (error) {
         console.error('删除下载失败:', error);
         setError((error as Error).message || '删除失败');

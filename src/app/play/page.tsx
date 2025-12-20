@@ -30,14 +30,15 @@ import {
 } from '@/lib/electron-compat';
 import { SearchResult } from '@/lib/types';
 import { getVideoResolutionFromM3u8, processImageUrl } from '@/lib/utils';
-import { RemoteRole, useRemoteRole } from '@/hooks/useRemoteRole';
 import {
-  notifyPlaybackSuccess,
   getDownloadedList,
   getDownloadedPlayUrl,
   isEpisodeDownloaded,
+  notifyPlaybackSuccess,
 } from '@/lib/video-cache.client';
+import { RemoteRole, useRemoteRole } from '@/hooks/useRemoteRole';
 
+import DownloadStatusProvider from '@/components/DownloadStatusProvider';
 import EpisodeSelector from '@/components/EpisodeSelector';
 import PageLayout from '@/components/PageLayout';
 
@@ -51,6 +52,8 @@ declare global {
 function PlayPageClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  // Dev guard: React StrictMode may mount/unmount and run effects twice in development.
+  const didInitAllRef = useRef(false);
 
   // 远程控制角色状态
   const { currentRole } = useRemoteRole();
@@ -575,19 +578,31 @@ function PlayPageClient() {
     }
   };
 
-  // 加载已下载的集数列表
+  // 加载已下载的集数列表（由 seriesKey 变化统一触发）
   const loadDownloadedEpisodes = async (sk: string) => {
     try {
       const list = await getDownloadedList(sk);
       const downloaded = new Set<number>();
-      list.downloads.forEach((item) => {
-        downloaded.add(item.episode_index);
-      });
+      list.downloads.forEach((item) => downloaded.add(item.episode_index));
       setDownloadedEpisodes(downloaded);
     } catch (error) {
       console.warn('加载已下载集数列表失败:', error);
     }
   };
+
+  // 统一由 seriesKey 变化触发一次下载列表刷新，避免多处重复调用
+  const lastLoadedSeriesKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!seriesKey) return;
+    if (lastLoadedSeriesKeyRef.current === seriesKey) return;
+    lastLoadedSeriesKeyRef.current = seriesKey;
+
+    loadDownloadedEpisodes(seriesKey);
+    // seriesKey 刚设置时，重新检查当前集是否已下载（用于从 detail API 补齐 seriesKey 的场景）
+    updateVideoUrl(detail, currentEpisodeIndex).catch((error) => {
+      console.warn('seriesKey 更新后重新检查下载失败:', error);
+    });
+  }, [seriesKey]);
 
   // 去广告相关函数
   function filterAdsFromM3U8(m3u8Content: string): string {
@@ -753,6 +768,9 @@ function PlayPageClient() {
 
   // 进入页面时直接获取全部源信息
   useEffect(() => {
+    if (didInitAllRef.current) return;
+    didInitAllRef.current = true;
+
     const fetchSourceDetail = async (
       source: string,
       id: string
@@ -772,8 +790,6 @@ function PlayPageClient() {
         if (detailData._series_key) {
           seriesKeyRef.current = detailData._series_key;
           setSeriesKey(detailData._series_key);
-          // 加载已下载的集数列表
-          loadDownloadedEpisodes(detailData._series_key);
         }
         setAvailableSources([detailData]);
         return [detailData];
@@ -908,8 +924,6 @@ function PlayPageClient() {
         console.log('设置 seriesKey:', sk);
         seriesKeyRef.current = sk;
         setSeriesKey(sk);
-        // 加载已下载的集数列表
-        loadDownloadedEpisodes(sk);
       } else {
         console.warn('detailData 没有 _series_key:', detailData);
       }
@@ -995,12 +1009,6 @@ function PlayPageClient() {
       if (seriesKeyRef.current !== sk) {
         seriesKeyRef.current = sk;
         setSeriesKey(sk);
-        // 加载已下载的集数列表
-        loadDownloadedEpisodes(sk);
-        // seriesKey 更新后，重新检查当前集是否已下载
-        updateVideoUrl(detail, currentEpisodeIndex).catch((error) => {
-          console.warn('seriesKey 更新后重新检查下载失败:', error);
-        });
       }
     }
   }, [detail]);
@@ -1108,8 +1116,6 @@ function PlayPageClient() {
         const sk = (newDetail as any)._series_key;
         seriesKeyRef.current = sk;
         setSeriesKey(sk);
-        // 加载已下载的集数列表
-        loadDownloadedEpisodes(sk);
       }
       setCurrentEpisodeIndex(targetIndex);
     } catch (err) {
@@ -2800,7 +2806,8 @@ function PlayPageClient() {
 
   return (
     <PageLayout activePath='/play'>
-      <div className='flex flex-col gap-3 py-4 px-5 lg:px-[3rem] 2xl:px-20'>
+      <DownloadStatusProvider seriesKey={seriesKey || undefined} pollInterval={2000}>
+        <div className='flex flex-col gap-3 py-4 px-5 lg:px-[3rem] 2xl:px-20'>
         {/* 第一行：影片标题 */}
         <div className='py-1'>
           <h1 className='text-xl font-semibold text-gray-900 dark:text-gray-100'>
@@ -3016,6 +3023,7 @@ function PlayPageClient() {
           </div>
         </div>
       </div>
+      </DownloadStatusProvider>
     </PageLayout>
   );
 }

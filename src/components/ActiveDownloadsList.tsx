@@ -16,14 +16,44 @@ interface ActiveDownloadsListProps {
 export default function ActiveDownloadsList({
   onTaskComplete,
 }: ActiveDownloadsListProps) {
+  // 尝试使用 Context（如果可用）
+  const downloadStatusContext = useDownloadStatusSafe();
   const [tasks, setTasks] = useState<DownloadStatus[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const mountedRef = useRef(true);
+  const lastTasksRef = useRef<DownloadStatus[]>([]);
 
+  // 如果使用 Context，从 Context 获取任务
+  useEffect(() => {
+    if (downloadStatusContext) {
+      // 从 Context 获取所有任务
+      const allTasks = downloadStatusContext.getAllTasks();
+      setTasks(allTasks);
+      setLoading(downloadStatusContext.loading);
+
+      // 检查是否有任务完成或失败，触发回调
+      const completedOrFailed = allTasks.filter(
+        (task) => task.status === 'completed' || task.status === 'failed'
+      );
+      const previousCompletedOrFailed = lastTasksRef.current.filter(
+        (task) => task.status === 'completed' || task.status === 'failed'
+      );
+
+      if (completedOrFailed.length > previousCompletedOrFailed.length) {
+        onTaskComplete?.();
+      }
+
+      lastTasksRef.current = allTasks;
+      setError(null);
+    }
+  }, [downloadStatusContext, onTaskComplete]);
+
+  // 独立轮询逻辑（当 Context 不可用时）
   const loadActiveTasks = async () => {
     try {
+      const { getAllActiveTasks } = await import('@/lib/video-cache.client');
       const data = await getAllActiveTasks();
       if (!mountedRef.current) return;
 
@@ -34,10 +64,17 @@ export default function ActiveDownloadsList({
       const completedOrFailed = data.tasks.filter(
         (task) => task.status === 'completed' || task.status === 'failed'
       );
-      if (completedOrFailed.length > 0) {
+
+      // 检查任务状态变化
+      const previousCompletedOrFailed = lastTasksRef.current.filter(
+        (task) => task.status === 'completed' || task.status === 'failed'
+      );
+
+      if (completedOrFailed.length > previousCompletedOrFailed.length) {
         onTaskComplete?.();
       }
 
+      lastTasksRef.current = data.tasks;
       setError(null);
     } catch (err) {
       if (!mountedRef.current) return;
@@ -51,6 +88,16 @@ export default function ActiveDownloadsList({
 
   useEffect(() => {
     mountedRef.current = true;
+
+    // 如果使用 Context，不需要独立轮询
+    if (downloadStatusContext) {
+      setLoading(downloadStatusContext.loading);
+      return () => {
+        mountedRef.current = false;
+      };
+    }
+
+    // Context 不可用时，使用独立轮询
     loadActiveTasks();
 
     // 开始轮询
@@ -64,13 +111,17 @@ export default function ActiveDownloadsList({
         clearInterval(pollingIntervalRef.current);
       }
     };
-  }, [onTaskComplete]);
+  }, [onTaskComplete, downloadStatusContext]);
 
   const handleCancel = async (taskId: string) => {
     try {
       await cancelDownload(taskId);
-      // 重新加载任务列表
-      await loadActiveTasks();
+      // 如果使用 Context，刷新状态；否则重新加载任务列表
+      if (downloadStatusContext) {
+        await downloadStatusContext.refresh();
+      } else {
+        await loadActiveTasks();
+      }
     } catch (err) {
       alert((err as Error).message || '取消下载失败');
     }

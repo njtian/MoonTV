@@ -21,6 +21,7 @@ services:
       - APP_VERSION=${VERSION:-20250904082546}
     volumes:
       - ./config.json:/app/config.json:ro
+      - ./.cache:/app/.cache
     extra_hosts:
       - "host.docker.internal:host-gateway"
     labels:

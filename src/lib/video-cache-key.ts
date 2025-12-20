@@ -31,8 +31,12 @@ export function generateSeriesKey(data: SearchResult): string {
   }
 
   // 使用标准化标题+年份
-  const normalizedTitle = normalizeTitle(data.title);
-  const year = data.year.match(/\d{4}/)?.[0] || 'unknown';
+  const normalizedTitle = normalizeTitle(data.title || '');
+  const year =
+    (data.year &&
+      typeof data.year === 'string' &&
+      data.year.match(/\d{4}/)?.[0]) ||
+    'unknown';
   return `title_${normalizedTitle}_${year}`;
 }
 

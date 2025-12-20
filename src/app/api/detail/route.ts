@@ -38,25 +38,23 @@ export async function GET(request: Request) {
 
     // 先调用API获取数据（用于生成series_key）
     const result = await getDetailFromApi(apiSite, id);
-    
+
     // 生成剧集标识
     const seriesKey = generateSeriesKey(result);
 
     // 检查缓存是否存在且有效
     const isValid = await videoCacheService.isValid(seriesKey);
     let cachedData = null;
-    let fromCache = false;
 
     if (isValid) {
       cachedData = await videoCacheService.getSeries(seriesKey);
       if (cachedData) {
-        fromCache = true;
         await videoCacheService.recordHit();
 
         // 合并新源的集数链接到缓存数据
         // 将新源的集数链接添加到响应中
         const mergedEpisodes = [...result.episodes];
-        
+
         // 构建响应数据
         const responseData: SearchResult & {
           _cached: boolean;
@@ -72,7 +70,12 @@ export async function GET(request: Request) {
         // 计算缓存年龄
         try {
           const cacheDir = getCacheDir();
-          const metaFile = path.join(cacheDir, 'videos', seriesKey, 'meta.json');
+          const metaFile = path.join(
+            cacheDir,
+            'videos',
+            seriesKey,
+            'meta.json'
+          );
           const metaContent = await fs.readFile(metaFile, 'utf-8');
           const meta = JSON.parse(metaContent) as CacheMeta;
           const ageSeconds = Math.floor((Date.now() - meta.created_at) / 1000);
@@ -83,6 +86,7 @@ export async function GET(request: Request) {
 
         // 异步更新缓存（合并新源）
         videoCacheService.setSeries(seriesKey, result).catch((err) => {
+          // eslint-disable-next-line no-console
           console.error('更新缓存失败:', err);
         });
 
@@ -102,6 +106,7 @@ export async function GET(request: Request) {
 
     // 异步写入缓存（不阻塞响应）
     videoCacheService.setSeries(seriesKey, result).catch((err) => {
+      // eslint-disable-next-line no-console
       console.error('写入缓存失败:', err);
     });
 
@@ -123,8 +128,21 @@ export async function GET(request: Request) {
       },
     });
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : '未知错误';
+    const errorStack = error instanceof Error ? error.stack : undefined;
+    // eslint-disable-next-line no-console
+    console.error('Detail API Error:', {
+      error: errorMessage,
+      stack: errorStack,
+      source: sourceCode,
+      id: id,
+    });
     return NextResponse.json(
-      { error: (error as Error).message },
+      {
+        error: errorMessage,
+        source: sourceCode,
+        id: id,
+      },
       { status: 500 }
     );
   }

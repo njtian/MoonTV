@@ -787,13 +787,16 @@ export class VideoDownloadService {
               downloadedEpisodes.push(episodeIndex);
               downloads.push({
                 episode_index: episodeIndex,
-                actual_source: metadata.actual_source,
-                source_name: metadata.source_name,
-                file_size_mb: metadata.file_size_mb,
-                downloaded_at: metadata.download_completed_at,
+                actual_source:
+                  metadata.actual_source ||
+                  metadata.requested_source ||
+                  'unknown',
+                source_name: metadata.source_name || 'unknown',
+                file_size_mb: metadata.file_size_mb || 0,
+                downloaded_at: metadata.download_completed_at || 0,
                 status: 'completed',
-                source_switched: metadata.source_switched,
-                requested_source: metadata.requested_source,
+                source_switched: metadata.source_switched || false,
+                requested_source: metadata.requested_source || 'unknown',
               });
             }
           }
@@ -926,6 +929,13 @@ export class VideoDownloadService {
                 const metadataFile = path.join(episodeDir, 'download.json');
                 interface EpisodeDownloadMetadata {
                   download_status?: string;
+                  title?: string;
+                  episode_title?: string;
+                  actual_source?: string;
+                  source_name?: string;
+                  file_size_mb?: number;
+                  download_completed_at?: number;
+                  cached_url?: string;
                 }
                 const metadata = await safeReadFile<EpisodeDownloadMetadata>(
                   metadataFile
@@ -935,13 +945,13 @@ export class VideoDownloadService {
                   items.push({
                     series_key: seriesKey,
                     episode_index: episodeIndex,
-                    title: metadata.title,
-                    episode_title: metadata.episode_title,
-                    actual_source: metadata.actual_source,
-                    source_name: metadata.source_name,
-                    file_size_mb: metadata.file_size_mb,
-                    downloaded_at: metadata.download_completed_at,
-                    cached_url: metadata.cached_url,
+                    title: metadata.title || '',
+                    episode_title: metadata.episode_title || '',
+                    actual_source: metadata.actual_source || 'unknown',
+                    source_name: metadata.source_name || 'unknown',
+                    file_size_mb: metadata.file_size_mb || 0,
+                    downloaded_at: metadata.download_completed_at || 0,
+                    cached_url: metadata.cached_url || '',
                     status: 'completed',
                   });
                 }
@@ -1238,7 +1248,7 @@ export class VideoDownloadService {
           task.status !== 'failed' &&
           task.status !== 'cancelled'
         ) {
-          const status = await this.getDownloadStatus(taskId);
+          const status = await this.getDownloadStatus(task.task_id);
           if (status) {
             activeStatuses.push(status);
           }

@@ -31,6 +31,12 @@ import {
 import { SearchResult } from '@/lib/types';
 import { getVideoResolutionFromM3u8, processImageUrl } from '@/lib/utils';
 import { RemoteRole, useRemoteRole } from '@/hooks/useRemoteRole';
+import {
+  notifyPlaybackSuccess,
+  getDownloadedList,
+  getDownloadedPlayUrl,
+  isEpisodeDownloaded,
+} from '@/lib/video-cache.client';
 
 import EpisodeSelector from '@/components/EpisodeSelector';
 import PageLayout from '@/components/PageLayout';
@@ -148,6 +154,16 @@ function PlayPageClient() {
   useEffect(() => {
     videoCoverRef.current = videoCover;
   }, [videoCover]);
+
+  // 缓存相关：series_key 和通知状态
+  const seriesKeyRef = useRef<string | null>(null);
+  const [seriesKey, setSeriesKey] = useState<string | null>(null);
+  const notifiedRef = useRef(false);
+  const notifiedConfirmedRef = useRef(false);
+  // 已下载的集数
+  const [downloadedEpisodes, setDownloadedEpisodes] = useState<Set<number>>(
+    new Set()
+  );
   // 当前源和ID
   const [currentSource, setCurrentSource] = useState(
     searchParams.get('source') || ''
@@ -480,8 +496,8 @@ function PlayPageClient() {
     return Math.round(score * 100) / 100; // 保留两位小数
   };
 
-  // 更新视频地址
-  const updateVideoUrl = (
+  // 更新视频地址（优先使用已下载文件）
+  const updateVideoUrl = async (
     detailData: SearchResult | null,
     episodeIndex: number
   ) => {
@@ -493,7 +509,47 @@ function PlayPageClient() {
       setVideoUrl('');
       return;
     }
+
+    // 检查是否有已下载文件
+    const currentSeriesKey = seriesKeyRef.current;
+    console.log('updateVideoUrl - 检查下载:', {
+      seriesKey: currentSeriesKey,
+      episodeIndex: episodeIndex + 1,
+      currentVideoUrl: videoUrl,
+    });
+    
+    if (currentSeriesKey) {
+      try {
+        const isDownloaded = await isEpisodeDownloaded(
+          currentSeriesKey,
+          episodeIndex + 1
+        );
+        console.log('updateVideoUrl - 下载检查结果:', {
+          isDownloaded,
+          episodeIndex: episodeIndex + 1,
+        });
+        
+        if (isDownloaded) {
+          // 使用已下载文件的播放 URL
+          const downloadedUrl = getDownloadedPlayUrl(
+            currentSeriesKey,
+            episodeIndex + 1
+          );
+          console.log('updateVideoUrl - 使用已下载文件:', downloadedUrl);
+          setVideoUrl(downloadedUrl);
+          return; // 已下载文件，直接返回，不继续执行
+        }
+      } catch (error) {
+        console.warn('检查已下载文件失败:', error);
+        // 降级到原始 URL
+      }
+    } else {
+      console.log('updateVideoUrl - seriesKey 未设置，跳过下载检查');
+    }
+
+    // 使用原始 URL
     const newUrl = detailData?.episodes[episodeIndex] || '';
+    console.log('updateVideoUrl - 使用原始URL:', newUrl);
     if (newUrl !== videoUrl) {
       setVideoUrl(newUrl);
     }
@@ -516,6 +572,20 @@ function PlayPageClient() {
     // 如果曾经有禁用属性，移除之
     if (video.hasAttribute('disableRemotePlayback')) {
       video.removeAttribute('disableRemotePlayback');
+    }
+  };
+
+  // 加载已下载的集数列表
+  const loadDownloadedEpisodes = async (sk: string) => {
+    try {
+      const list = await getDownloadedList(sk);
+      const downloaded = new Set<number>();
+      list.downloads.forEach((item) => {
+        downloaded.add(item.episode_index);
+      });
+      setDownloadedEpisodes(downloaded);
+    } catch (error) {
+      console.warn('加载已下载集数列表失败:', error);
     }
   };
 
@@ -673,7 +743,12 @@ function PlayPageClient() {
 
   // 当集数索引变化时自动更新视频地址
   useEffect(() => {
-    updateVideoUrl(detail, currentEpisodeIndex);
+    updateVideoUrl(detail, currentEpisodeIndex).catch((error) => {
+      console.warn('更新视频地址失败:', error);
+    });
+    // 重置通知状态，以便新集数可以重新通知
+    notifiedRef.current = false;
+    notifiedConfirmedRef.current = false;
   }, [detail, currentEpisodeIndex]);
 
   // 进入页面时直接获取全部源信息
@@ -689,7 +764,17 @@ function PlayPageClient() {
         if (!detailResponse.ok) {
           throw new Error('获取视频详情失败');
         }
-        const detailData = (await detailResponse.json()) as SearchResult;
+        const detailData = (await detailResponse.json()) as SearchResult & {
+          _series_key?: string;
+          _cached?: boolean;
+        };
+        // 保存 series_key
+        if (detailData._series_key) {
+          seriesKeyRef.current = detailData._series_key;
+          setSeriesKey(detailData._series_key);
+          // 加载已下载的集数列表
+          loadDownloadedEpisodes(detailData._series_key);
+        }
         setAvailableSources([detailData]);
         return [detailData];
       } catch (err) {
@@ -792,6 +877,24 @@ function PlayPageClient() {
 
       console.log(detailData.source, detailData.id);
 
+      // 如果 detailData 没有 _series_key，重新从 detail API 获取
+      if (!(detailData as any)._series_key) {
+        try {
+          const detailResponse = await fetch(
+            `/api/detail?source=${detailData.source}&id=${detailData.id}`
+          );
+          if (detailResponse.ok) {
+            const fullDetailData = (await detailResponse.json()) as SearchResult & {
+              _series_key?: string;
+            };
+            // 合并完整数据到 detailData
+            detailData = { ...detailData, ...fullDetailData };
+          }
+        } catch (err) {
+          console.warn('获取 series_key 失败:', err);
+        }
+      }
+
       setNeedPrefer(false);
       setCurrentSource(detailData.source);
       setCurrentId(detailData.id);
@@ -799,6 +902,17 @@ function PlayPageClient() {
       setVideoTitle(detailData.title || videoTitleRef.current);
       setVideoCover(detailData.poster);
       setDetail(detailData);
+      // 保存 series_key（如果存在）
+      if ((detailData as any)._series_key) {
+        const sk = (detailData as any)._series_key;
+        console.log('设置 seriesKey:', sk);
+        seriesKeyRef.current = sk;
+        setSeriesKey(sk);
+        // 加载已下载的集数列表
+        loadDownloadedEpisodes(sk);
+      } else {
+        console.warn('detailData 没有 _series_key:', detailData);
+      }
       if (currentEpisodeIndex >= detailData.episodes.length) {
         setCurrentEpisodeIndex(0);
       }
@@ -874,6 +988,23 @@ function PlayPageClient() {
     initSkipConfig();
   }, []);
 
+  // 监听 detail 变化，确保 seriesKey 正确更新
+  useEffect(() => {
+    if (detail && (detail as any)._series_key) {
+      const sk = (detail as any)._series_key;
+      if (seriesKeyRef.current !== sk) {
+        seriesKeyRef.current = sk;
+        setSeriesKey(sk);
+        // 加载已下载的集数列表
+        loadDownloadedEpisodes(sk);
+        // seriesKey 更新后，重新检查当前集是否已下载
+        updateVideoUrl(detail, currentEpisodeIndex).catch((error) => {
+          console.warn('seriesKey 更新后重新检查下载失败:', error);
+        });
+      }
+    }
+  }, [detail]);
+
   // 处理换源
   const handleSourceChange = async (
     newSource: string,
@@ -915,12 +1046,30 @@ function PlayPageClient() {
         }
       }
 
-      const newDetail = availableSources.find(
+      let newDetail = availableSources.find(
         (source) => source.source === newSource && source.id === newId
       );
       if (!newDetail) {
         setError('未找到匹配结果');
         return;
+      }
+
+      // 如果 newDetail 没有 _series_key，重新从 detail API 获取
+      if (!(newDetail as any)._series_key) {
+        try {
+          const detailResponse = await fetch(
+            `/api/detail?source=${newSource}&id=${newId}`
+          );
+          if (detailResponse.ok) {
+            const detailData = (await detailResponse.json()) as SearchResult & {
+              _series_key?: string;
+            };
+            // 合并 _series_key 到 newDetail
+            newDetail = { ...newDetail, ...detailData };
+          }
+        } catch (err) {
+          console.warn('获取新源的 series_key 失败:', err);
+        }
       }
 
       // 尝试跳转到当前正在播放的集数
@@ -954,6 +1103,14 @@ function PlayPageClient() {
       setCurrentSource(newSource);
       setCurrentId(newId);
       setDetail(newDetail);
+      // 保存 series_key（如果存在）
+      if ((newDetail as any)._series_key) {
+        const sk = (newDetail as any)._series_key;
+        seriesKeyRef.current = sk;
+        setSeriesKey(sk);
+        // 加载已下载的集数列表
+        loadDownloadedEpisodes(sk);
+      }
       setCurrentEpisodeIndex(targetIndex);
     } catch (err) {
       // 隐藏换源加载状态
@@ -1833,10 +1990,18 @@ function PlayPageClient() {
       }集`;
       artPlayerRef.current.poster = videoCover;
       if (artPlayerRef.current?.video) {
-        ensureVideoSource(
-          artPlayerRef.current.video as HTMLVideoElement,
-          videoUrl
-        );
+        // IMPORTANT:
+        // For HLS (hls.js), the video element src will be a MediaSource blob URL.
+        // Forcing <source src=...> here can override the blob URL and break playback
+        // (often manifests as requests to invalid relative segment URLs).
+        const isLikelyHls =
+          videoUrl.startsWith('/api/download/play') || videoUrl.includes('.m3u8');
+        if (!isLikelyHls) {
+          ensureVideoSource(
+            artPlayerRef.current.video as HTMLVideoElement,
+            videoUrl
+          );
+        }
       }
       return;
     }
@@ -1856,9 +2021,20 @@ function PlayPageClient() {
       Artplayer.PLAYBACK_RATE = [0.5, 0.75, 1, 1.25, 1.5, 2, 3];
       Artplayer.USE_RAF = true;
 
+      // 检测URL是否为已下载文件的播放URL（需要M3U8类型）
+      const isDownloadedUrl = videoUrl.startsWith('/api/download/play');
+      const videoType = isDownloadedUrl ? 'm3u8' : undefined;
+      
+      console.log('创建播放器:', {
+        url: videoUrl,
+        type: videoType,
+        isDownloadedUrl,
+      });
+
       artPlayerRef.current = new Artplayer({
         container: artRef.current,
         url: videoUrl,
+        type: videoType, // 显式指定类型为m3u8（如果是已下载文件）
         poster: videoCover,
         volume: 0.7,
         isLive: false,
@@ -1901,6 +2077,25 @@ function PlayPageClient() {
             if (video.hls) {
               video.hls.destroy();
             }
+
+            // Avoid "Media element src was set while attaching MediaSource".
+            // ArtPlayer may set `video.src` to the playlist URL before customType runs.
+            // Clear it so hls.js can safely attach its MediaSource (blob URL).
+            try {
+              video.pause();
+            } catch (_) {
+              // ignore
+            }
+            try {
+              video.removeAttribute('src');
+              // remove <source> children if any
+              const sources = Array.from(video.getElementsByTagName('source'));
+              sources.forEach((s) => s.remove());
+              video.load();
+            } catch (_) {
+              // ignore
+            }
+
             const hls = new Hls({
               debug: false, // 关闭日志
               enableWorker: true, // WebWorker 解码，降低主线程压力
@@ -1917,29 +2112,116 @@ function PlayPageClient() {
                 : Hls.DefaultConfig.loader,
             });
 
+            console.log('HLS 加载源:', url);
             hls.loadSource(url);
             hls.attachMedia(video);
             video.hls = hls;
+            
+            // 监听HLS事件以便调试
+            let didHideVideoLoading = false;
+            const hideVideoLoadingOnce = () => {
+              if (didHideVideoLoading) return;
+              didHideVideoLoading = true;
+              setIsVideoLoading(false);
+            };
+            hls.on(Hls.Events.MANIFEST_PARSED, () => {
+              console.log('HLS manifest 解析成功');
+              // Usually safe to hide loading once manifest is parsed for local playback
+              hideVideoLoadingOnce();
+            });
+            hls.on(Hls.Events.FRAG_LOADING, (event: any, data: any) => {
+              console.log('HLS 加载分段:', data.frag.url);
+            });
+            hls.on(Hls.Events.FRAG_BUFFERED, () => {
+              hideVideoLoadingOnce();
+            });
+            hls.on(Hls.Events.KEY_LOADING as any, (_event: any, data: any) => {
+              try {
+                console.log(
+                  'HLS KEY_LOADING:',
+                  JSON.stringify(
+                    {
+                      uri: data?.frag?.decryptdata?.uri,
+                      keyFormat: data?.frag?.decryptdata?.keyFormat,
+                      method: data?.frag?.decryptdata?.method,
+                    },
+                    null,
+                    0
+                  )
+                );
+              } catch {
+                console.log('HLS KEY_LOADING');
+              }
+            });
+            hls.on(Hls.Events.KEY_LOADED as any, (_event: any, _data: any) => {
+              console.log('HLS KEY_LOADED');
+            });
 
-            ensureVideoSource(video, url);
+            // IMPORTANT:
+            // Do NOT set video.src / <source> manually for hls.js playback.
+            // hls.js attaches a MediaSource and uses a blob URL; overriding it breaks playback.
 
             hls.on(Hls.Events.ERROR, function (event: any, data: any) {
-              console.error('HLS Error:', event, data);
+              const payload = {
+                type: data?.type,
+                details: data?.details,
+                fatal: data?.fatal,
+                url: data?.url,
+                response: data?.response
+                  ? {
+                      code: data.response.code,
+                      text: data.response.text,
+                      url: data.response.url,
+                    }
+                  : null,
+                error: data?.error ? String(data.error) : null,
+                frag: data?.frag
+                  ? {
+                      url: data.frag.url,
+                      relurl: data.frag.relurl,
+                      baseurl: data.frag.baseurl,
+                      sn: data.frag.sn,
+                    }
+                  : null,
+                decrypt: data?.frag?.decryptdata
+                  ? {
+                      method: data.frag.decryptdata.method,
+                      uri: data.frag.decryptdata.uri,
+                    }
+                  : null,
+              };
+              console.error('HLS Error JSON:', JSON.stringify(payload, null, 0));
               if (data.fatal) {
                 switch (data.type) {
                   case Hls.ErrorTypes.NETWORK_ERROR:
-                    console.log('网络错误，尝试恢复...');
+                    console.log('网络错误，尝试恢复...', {
+                      url: data.url,
+                      details: data.details,
+                    });
                     hls.startLoad();
                     break;
                   case Hls.ErrorTypes.MEDIA_ERROR:
-                    console.log('媒体错误，尝试恢复...');
+                    console.log('媒体错误，尝试恢复...', {
+                      url: data.url,
+                      details: data.details,
+                    });
                     hls.recoverMediaError();
                     break;
                   default:
-                    console.log('无法恢复的错误');
+                    console.log('无法恢复的错误', {
+                      type: data.type,
+                      details: data.details,
+                      url: data.url,
+                    });
                     hls.destroy();
                     break;
                 }
+              } else {
+                console.warn('HLS 非致命错误:', {
+                  type: data.type,
+                  details: data.details,
+                  url: data.url,
+                });
               }
             });
           },
@@ -2061,6 +2343,24 @@ function PlayPageClient() {
       // 监听播放器事件
       artPlayerRef.current.on('ready', () => {
         setError(null);
+        // 尝试通知服务器更新缓存（不等待结果）
+        if (
+          seriesKeyRef.current &&
+          currentEpisodeIndexRef.current >= 0 &&
+          videoUrl &&
+          !notifiedRef.current
+        ) {
+          notifiedRef.current = true;
+          notifyPlaybackSuccess(
+            seriesKeyRef.current,
+            currentEpisodeIndexRef.current + 1,
+            currentSourceRef.current,
+            videoUrl,
+            detailRef.current?.source_name
+          ).catch(() => {
+            // 静默失败，不影响播放
+          });
+        }
       });
 
       artPlayerRef.current.on('video:volumechange', () => {
@@ -2155,8 +2455,18 @@ function PlayPageClient() {
 
       artPlayerRef.current.on('error', (err: any) => {
         console.error('播放器错误:', err);
+        // 如果是网络错误且当前播放时间为0，可能是初始加载失败
         if (artPlayerRef.current.currentTime > 0) {
           return;
+        }
+        // 记录详细错误信息
+        if (err && typeof err === 'object') {
+          console.error('播放器错误详情:', {
+            type: err.type,
+            message: err.message,
+            target: err.target,
+            currentSrc: artPlayerRef.current?.url,
+          });
         }
       });
 
@@ -2172,6 +2482,26 @@ function PlayPageClient() {
       });
 
       artPlayerRef.current.on('video:timeupdate', () => {
+        // 缓存更新确认通知：播放超过10秒时确认通知
+        if (
+          !notifiedConfirmedRef.current &&
+          artPlayerRef.current.currentTime > 10 &&
+          seriesKeyRef.current &&
+          currentEpisodeIndexRef.current >= 0 &&
+          videoUrl
+        ) {
+          notifiedConfirmedRef.current = true;
+          notifyPlaybackSuccess(
+            seriesKeyRef.current,
+            currentEpisodeIndexRef.current + 1,
+            currentSourceRef.current,
+            videoUrl,
+            detailRef.current?.source_name
+          ).catch(() => {
+            // 静默失败，不影响播放
+          });
+        }
+
         const now = Date.now();
         let interval = 5000;
         if (process.env.NEXT_PUBLIC_STORAGE_TYPE === 'd1') {
@@ -2191,10 +2521,15 @@ function PlayPageClient() {
       });
 
       if (artPlayerRef.current?.video) {
-        ensureVideoSource(
-          artPlayerRef.current.video as HTMLVideoElement,
-          videoUrl
-        );
+        // Same rationale as above: don't override MediaSource blob for HLS playback.
+        const isLikelyHls =
+          videoUrl.startsWith('/api/download/play') || videoUrl.includes('.m3u8');
+        if (!isLikelyHls) {
+          ensureVideoSource(
+            artPlayerRef.current.video as HTMLVideoElement,
+            videoUrl
+          );
+        }
       }
     } catch (err) {
       console.error('创建播放器失败:', err);
@@ -2606,6 +2941,8 @@ function PlayPageClient() {
                 sourceSearchLoading={sourceSearchLoading}
                 sourceSearchError={sourceSearchError}
                 precomputedVideoInfo={precomputedVideoInfo}
+                seriesKey={seriesKey || undefined}
+                downloadedEpisodes={downloadedEpisodes}
               />
             </div>
           </div>

@@ -11,6 +11,7 @@ import React, {
 
 import { SearchResult } from '@/lib/types';
 import { getVideoResolutionFromM3u8, processImageUrl } from '@/lib/utils';
+import DownloadButton from './DownloadButton';
 
 // 定义视频信息类型
 interface VideoInfo {
@@ -40,6 +41,9 @@ interface EpisodeSelectorProps {
   sourceSearchError?: string | null;
   /** 预计算的测速结果，避免重复测速 */
   precomputedVideoInfo?: Map<string, VideoInfo>;
+  /** 下载相关 */
+  seriesKey?: string;
+  downloadedEpisodes?: Set<number>;
 }
 
 /**
@@ -58,6 +62,8 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
   sourceSearchLoading = false,
   sourceSearchError = null,
   precomputedVideoInfo,
+  seriesKey,
+  downloadedEpisodes = new Set(),
 }) => {
   const router = useRouter();
   const pageCount = Math.ceil(totalEpisodes / episodesPerPage);
@@ -400,19 +406,57 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
               return episodes;
             })().map((episodeNumber) => {
               const isActive = episodeNumber === value;
+              const isDownloaded = downloadedEpisodes.has(episodeNumber);
+              // 获取当前集的 URL（如果有）
+              const currentDetail = availableSources.find(
+                (s) => s.source === currentSource && s.id === currentId
+              );
+              const episodeUrl =
+                currentDetail?.episodes?.[episodeNumber - 1] || undefined;
+
               return (
-                <button
+                <div
                   key={episodeNumber}
-                  onClick={() => handleEpisodeClick(episodeNumber - 1)}
-                  className={`h-10 flex items-center justify-center text-sm font-medium rounded-md transition-all duration-200 
-                    ${
-                      isActive
-                        ? 'bg-green-500 text-white shadow-lg shadow-green-500/25 dark:bg-green-600'
-                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300 hover:scale-105 dark:bg-white/10 dark:text-gray-300 dark:hover:bg-white/20'
-                    }`.trim()}
+                  className="relative flex items-center justify-center"
                 >
-                  {episodeNumber}
-                </button>
+                  <button
+                    onClick={() => handleEpisodeClick(episodeNumber - 1)}
+                    className={`h-10 w-10 flex items-center justify-center text-sm font-medium rounded-md transition-all duration-200 
+                      ${
+                        isActive
+                          ? 'bg-green-500 text-white shadow-lg shadow-green-500/25 dark:bg-green-600'
+                          : isDownloaded
+                          ? 'bg-blue-200 text-blue-700 hover:bg-blue-300 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50'
+                          : 'bg-gray-200 text-gray-700 hover:bg-gray-300 hover:scale-105 dark:bg-white/10 dark:text-gray-300 dark:hover:bg-white/20'
+                      }`.trim()}
+                    title={
+                      isDownloaded
+                        ? `第${episodeNumber}集（已下载）`
+                        : `第${episodeNumber}集`
+                    }
+                  >
+                    {episodeNumber}
+                  </button>
+                  {/* 下载按钮 */}
+                  {seriesKey && (
+                    <div className="absolute -top-1 -right-1 z-10">
+                      <DownloadButton
+                        seriesKey={seriesKey}
+                        episodeIndex={episodeNumber}
+                        source={currentSource || ''}
+                        url={episodeUrl}
+                        title={videoTitle || ''}
+                        episodeTitle={`第${episodeNumber}集`}
+                        size="sm"
+                        className="bg-white dark:bg-gray-800 rounded-full shadow-md"
+                      />
+                    </div>
+                  )}
+                  {/* 已下载标识 */}
+                  {isDownloaded && (
+                    <div className="absolute -bottom-0.5 -right-0.5 w-2 h-2 bg-green-500 rounded-full border border-white dark:border-gray-800" />
+                  )}
+                </div>
               );
             })}
           </div>

@@ -1,7 +1,6 @@
-import {
-  M3U8Segment,
-  M3U8DownloadResult,
-} from './video-cache.types';
+import { promises as fs } from 'fs';
+import path from 'path';
+
 import {
   downloadM3U8File,
   isMasterPlaylist,
@@ -9,10 +8,9 @@ import {
   parseMediaPlaylist,
   selectBestStream,
 } from './m3u8-parser';
-import { ensureDirectory, atomicWriteFile } from './video-cache-utils';
-import path from 'path';
-import { promises as fs } from 'fs';
 import { resolveUrl } from './m3u8-parser';
+import { M3U8DownloadResult, M3U8Segment } from './video-cache.types';
+import { atomicWriteFile, ensureDirectory } from './video-cache-utils';
 
 /**
  * M3U8下载器类
@@ -31,8 +29,7 @@ export class M3U8Downloader {
     try {
       // 1. 下载并解析M3U8文件
       const m3u8Content = await downloadM3U8File(m3u8Url);
-      const baseUrl =
-        m3u8Url.substring(0, m3u8Url.lastIndexOf('/') + 1);
+      const baseUrl = m3u8Url.substring(0, m3u8Url.lastIndexOf('/') + 1);
 
       // 检查是否已取消
       if (abortSignal?.aborted) {
@@ -45,7 +42,13 @@ export class M3U8Downloader {
         const masterPlaylist = parseMasterPlaylist(m3u8Content, baseUrl);
         const bestStreamUrl = selectBestStream(masterPlaylist);
         // 递归下载媒体播放列表
-        return this.downloadM3U8(bestStreamUrl, outputDir, taskId, abortSignal, onProgress);
+        return this.downloadM3U8(
+          bestStreamUrl,
+          outputDir,
+          taskId,
+          abortSignal,
+          onProgress
+        );
       }
 
       // 3. 解析媒体播放列表
@@ -68,15 +71,19 @@ export class M3U8Downloader {
           throw new Error('下载已取消');
         }
 
-        const uriMatch = keyLine.match(/URI=\"([^\"]+)\"/);
+        const uriMatch = keyLine.match(/URI="([^"]+)"/);
         if (uriMatch) {
           const keyUri = uriMatch[1];
           const keyUrl = resolveUrl(baseUrl, keyUri);
-          const keyBytes = await this.downloadSegment(keyUrl, taskId, abortSignal);
+          const keyBytes = await this.downloadSegment(
+            keyUrl,
+            taskId,
+            abortSignal
+          );
           const keyPath = path.join(outputDir, 'key.key');
           await fs.writeFile(keyPath, keyBytes);
           // rewrite to local key filename
-          rewrittenKeyLine = keyLine.replace(/URI=\"([^\"]+)\"/, 'URI="key.key"');
+          rewrittenKeyLine = keyLine.replace(/URI="([^"]+)"/, 'URI="key.key"');
         }
       }
 
@@ -102,7 +109,7 @@ export class M3U8Downloader {
             downloadedSegments.push(segmentFileName);
             totalSize += stats.size;
             existingSegmentsCount++;
-            
+
             // 不在这里更新进度，等所有已存在的分段检查完后再统一更新
           } else {
             // 文件不存在或为空，停止检查，从这里开始下载
@@ -136,7 +143,11 @@ export class M3U8Downloader {
 
         try {
           // 顺序下载分段（await确保前一个完成后再下载下一个）
-          const segmentData = await this.downloadSegment(segment.url, taskId, abortSignal);
+          const segmentData = await this.downloadSegment(
+            segment.url,
+            taskId,
+            abortSignal
+          );
           await fs.writeFile(segmentPath, segmentData);
 
           downloadedSegments.push(segmentFileName);

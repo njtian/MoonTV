@@ -1,4 +1,3 @@
-
 /**
  * 集数链接结构
  */
@@ -164,7 +163,13 @@ export interface DownloadTask {
   episode_title: string;
   requested_source: string;
   current_source: string;
-  status: 'pending' | 'downloading' | 'completed' | 'failed' | 'paused' | 'cancelled';
+  status:
+    | 'pending'
+    | 'downloading'
+    | 'completed'
+    | 'failed'
+    | 'paused'
+    | 'cancelled';
   progress: number;
   downloaded_bytes: number;
   total_bytes: number;

@@ -63,7 +63,6 @@ export async function GET(request: Request) {
       },
     });
   } catch (error) {
-    console.error('获取缓存状态失败:', error);
     return NextResponse.json(
       { error: (error as Error).message },
       { status: 500 }

@@ -1,7 +1,7 @@
 import {
+  M3U8Segment,
   MasterPlaylist,
   MediaPlaylist,
-  M3U8Segment,
   StreamInfo,
 } from './video-cache.types';
 
@@ -41,10 +41,7 @@ export async function downloadM3U8File(url: string): Promise<string> {
  * 解析相对URL为绝对URL
  */
 export function resolveUrl(baseUrl: string, relativeUrl: string): string {
-  if (
-    relativeUrl.startsWith('http://') ||
-    relativeUrl.startsWith('https://')
-  ) {
+  if (relativeUrl.startsWith('http://') || relativeUrl.startsWith('https://')) {
     return relativeUrl; // 绝对路径
   }
 

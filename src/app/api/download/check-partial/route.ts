@@ -1,5 +1,16 @@
+import { promises as fs } from 'fs';
 import { NextResponse } from 'next/server';
-import { getVideoDownloadService } from '@/lib/video-download-service';
+import path from 'path';
+
+import {
+  getCacheDir,
+  safeReadFile,
+  validatePath,
+} from '@/lib/video-cache-utils';
+
+interface DownloadMetadata {
+  download_status?: string;
+}
 
 export async function GET(request: Request) {
   try {
@@ -8,18 +19,12 @@ export async function GET(request: Request) {
     const episodeIndex = searchParams.get('episode_index');
 
     if (!seriesKey || !episodeIndex) {
-      return NextResponse.json(
-        { error: '缺少必要参数' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: '缺少必要参数' }, { status: 400 });
     }
 
     const episodeIndexNum = parseInt(episodeIndex, 10);
     if (isNaN(episodeIndexNum)) {
-      return NextResponse.json(
-        { error: '无效的集数' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: '无效的集数' }, { status: 400 });
     }
 
     // 使用 videoDownloadService 的私有方法检查部分下载
@@ -30,7 +35,6 @@ export async function GET(request: Request) {
       has_partial_download: hasPartial,
     });
   } catch (error) {
-    console.error('检查部分下载失败:', error);
     return NextResponse.json(
       { error: (error as Error).message },
       { status: 500 }
@@ -42,10 +46,6 @@ async function checkPartialDownload(
   seriesKey: string,
   episodeIndex: number
 ): Promise<boolean> {
-  const { promises: fs } = await import('fs');
-  const path = await import('path');
-  const { getCacheDir, validatePath, safeReadFile } = await import('@/lib/video-cache-utils');
-
   const cacheDir = getCacheDir();
   const episodeDir = path.join(
     cacheDir,
@@ -77,7 +77,7 @@ async function checkPartialDownload(
     // 如果有分段文件但没有完成标记，说明是部分下载
     if (segmentFiles.length > 0) {
       const metadataFile = path.join(episodeDir, 'download.json');
-      const metadata = await safeReadFile<any>(metadataFile);
+      const metadata = await safeReadFile<DownloadMetadata>(metadataFile);
       // 如果 metadata 不存在或状态不是 completed，说明是部分下载
       return !metadata || metadata.download_status !== 'completed';
     }

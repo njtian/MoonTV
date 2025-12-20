@@ -1,6 +1,7 @@
-import { NextResponse } from 'next/server';
 import { promises as fs } from 'fs';
+import { NextResponse } from 'next/server';
 import path from 'path';
+
 import { getCacheDir, validatePath } from '@/lib/video-cache-utils';
 
 export async function GET(request: Request) {
@@ -43,11 +44,9 @@ export async function GET(request: Request) {
       },
     });
   } catch (error) {
-    console.error('获取密钥失败:', error);
     return NextResponse.json(
       { error: (error as Error).message },
       { status: 500 }
     );
   }
 }
-

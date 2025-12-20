@@ -114,7 +114,9 @@ export class VideoDownloadService {
     );
     if (existingTask) {
       throw new Error(
-        `该集已有下载任务（${existingTask.status === 'pending' ? '等待中' : '下载中'}）`
+        `该集已有下载任务（${
+          existingTask.status === 'pending' ? '等待中' : '下载中'
+        }）`
       );
     }
 
@@ -177,8 +179,8 @@ export class VideoDownloadService {
 
     // 如果队列为空且无正在下载的任务，立即开始处理
     if (!this.processingQueue && this.currentDownload === null) {
-      this.processDownloadQueue().catch((err) => {
-        console.error('处理下载队列失败:', err);
+      this.processDownloadQueue().catch(() => {
+        // 静默处理错误
       });
     }
 
@@ -221,7 +223,6 @@ export class VideoDownloadService {
           const currentTask = await this.getTask(task.task_id);
           if (currentTask?.status === 'cancelled') {
             // 任务已取消，不需要设置为 failed
-            console.log(`任务 ${task.task_id} 已取消`);
           } else {
             task.status = 'failed';
             task.error = (error as Error).message;
@@ -399,15 +400,15 @@ export class VideoDownloadService {
           }
 
           task.updated_at = Date.now();
-          
+
           // 再次检查 abortController（在保存前最后检查一次）
           if (abortController.signal.aborted) {
             return;
           }
-          
+
           // 保存任务（saveTask 内部会检查取消状态，避免覆盖）
-          this.saveTask(task).catch((err) => {
-            console.error('保存任务失败:', err);
+          this.saveTask(task).catch(() => {
+            // 静默处理错误
           });
         }
       );
@@ -420,7 +421,12 @@ export class VideoDownloadService {
         const speedMBps = downloadedBytes / (1024 * 1024) / duration;
 
         // 保存下载元数据
-        await this.saveDownloadMetadata(task, source, result.file_path, result.file_size);
+        await this.saveDownloadMetadata(
+          task,
+          source,
+          result.file_path,
+          result.file_size
+        );
 
         return {
           success: true,
@@ -437,7 +443,10 @@ export class VideoDownloadService {
       this.abortControllers.delete(task.task_id);
 
       // 检查是否是因为取消导致的错误
-      if (abortController.signal.aborted || (error as Error).name === 'AbortError') {
+      if (
+        abortController.signal.aborted ||
+        (error as Error).name === 'AbortError'
+      ) {
         return {
           success: false,
           error: '任务已取消',
@@ -524,14 +533,24 @@ export class VideoDownloadService {
    * This method is safe to call during playback: it is idempotent and will no-op
    * once the key and playlist are repaired.
    */
-  async ensurePlayableHlsDownload(seriesKey: string, episodeIndex: number): Promise<void> {
+  async ensurePlayableHlsDownload(
+    seriesKey: string,
+    episodeIndex: number
+  ): Promise<void> {
     await this.initialize();
 
-    const episodeDir = path.join(this.downloadDir, seriesKey, episodeIndex.toString());
+    const episodeDir = path.join(
+      this.downloadDir,
+      seriesKey,
+      episodeIndex.toString()
+    );
     const playlistFile = path.join(episodeDir, 'playlist.m3u8');
     const keyFile = path.join(episodeDir, 'key.key');
 
-    if (!validatePath(episodeDir, this.downloadDir) || !validatePath(playlistFile, this.downloadDir)) {
+    if (
+      !validatePath(episodeDir, this.downloadDir) ||
+      !validatePath(playlistFile, this.downloadDir)
+    ) {
       return;
     }
 
@@ -556,13 +575,23 @@ export class VideoDownloadService {
     // Determine original master URL from metadata or cache
     let originalUrl: string | null = null;
     const metadataFile = path.join(episodeDir, 'download.json');
-    const metadata = await safeReadFile<any>(metadataFile);
+    interface EpisodeMetadata {
+      original_url?: string | null;
+      actual_source?: string;
+      requested_source?: string;
+    }
+    const metadata = await safeReadFile<EpisodeMetadata>(metadataFile);
     if (metadata?.original_url && typeof metadata.original_url === 'string') {
       originalUrl = metadata.original_url;
     }
     if (!originalUrl) {
-      const source = metadata?.actual_source || metadata?.requested_source || 'unknown';
-      originalUrl = await this.getDownloadUrl(seriesKey, episodeIndex, source).catch(() => null);
+      const source =
+        metadata?.actual_source || metadata?.requested_source || 'unknown';
+      originalUrl = await this.getDownloadUrl(
+        seriesKey,
+        episodeIndex,
+        source
+      ).catch(() => null);
     }
     if (!originalUrl) {
       return;
@@ -588,7 +617,8 @@ export class VideoDownloadService {
     };
 
     const resolveUrl = (base: string, relative: string): string => {
-      if (relative.startsWith('http://') || relative.startsWith('https://')) return relative;
+      if (relative.startsWith('http://') || relative.startsWith('https://'))
+        return relative;
       try {
         return new URL(relative, base).href;
       } catch {
@@ -613,7 +643,8 @@ export class VideoDownloadService {
       }
     }
 
-    const mediaText = mediaUrl === originalUrl ? masterText : await fetchText(mediaUrl);
+    const mediaText =
+      mediaUrl === originalUrl ? masterText : await fetchText(mediaUrl);
 
     // Extract KEY line (AES-128)
     const keyLine = mediaText
@@ -624,7 +655,7 @@ export class VideoDownloadService {
       return; // not encrypted
     }
 
-    const uriMatch = keyLine.match(/URI=\"([^\"]+)\"/);
+    const uriMatch = keyLine.match(/URI="([^"]+)"/);
     if (!uriMatch) return;
     const keyUriRaw = uriMatch[1];
     const keyUrl = resolveUrl(mediaUrl, keyUriRaw);
@@ -661,12 +692,15 @@ export class VideoDownloadService {
         const line = lineRaw.trim();
         if (!line) return '';
         if (line.startsWith('#EXT-X-KEY:')) {
-          return lineRaw.replace(/URI=\"([^\"]+)\"/, 'URI="key.key"');
+          return lineRaw.replace(/URI="([^"]+)"/, 'URI="key.key"');
         }
         if (line.startsWith('#')) return lineRaw;
         // segment uri line
         segIndex += 1;
-        const localName = `segments/segment${String(segIndex).padStart(3, '0')}.ts`;
+        const localName = `segments/segment${String(segIndex).padStart(
+          3,
+          '0'
+        )}.ts`;
         return localName;
       })
       .join('\n');
@@ -684,7 +718,28 @@ export class VideoDownloadService {
     const videoCacheService = getVideoCacheService();
     const cachedSeries = await videoCacheService.getSeries(seriesKey);
 
-    let downloadsList: any = {
+    interface SeriesDownloadItem {
+      episode_index: number;
+      actual_source: string;
+      source_name: string;
+      file_size_mb: number;
+      downloaded_at: number;
+      status: 'completed';
+      source_switched: boolean;
+      requested_source: string;
+    }
+
+    interface SeriesDownloadsList {
+      series_key: string;
+      title: string;
+      total_episodes: number;
+      downloaded_episodes: number[];
+      downloads: SeriesDownloadItem[];
+      total_size_mb: number;
+      last_updated: number;
+    }
+
+    let downloadsList: SeriesDownloadsList = {
       series_key: seriesKey,
       title: cachedSeries?.title || '',
       total_episodes: cachedSeries?.total_episodes || 0,
@@ -695,7 +750,7 @@ export class VideoDownloadService {
     };
 
     try {
-      const existing = await safeReadFile<any>(downloadsFile);
+      const existing = await safeReadFile<SeriesDownloadsList>(downloadsFile);
       if (existing) {
         downloadsList = existing;
       }
@@ -705,7 +760,7 @@ export class VideoDownloadService {
 
     // 扫描所有已下载的集
     const downloadedEpisodes: number[] = [];
-    const downloads: any[] = [];
+    const downloads: SeriesDownloadItem[] = [];
 
     try {
       const fs = await import('fs/promises');
@@ -717,7 +772,16 @@ export class VideoDownloadService {
           if (!isNaN(episodeIndex)) {
             const episodeDir = path.join(seriesDir, entry.name);
             const metadataFile = path.join(episodeDir, 'download.json');
-            const metadata = await safeReadFile<any>(metadataFile);
+            interface DownloadMetadata {
+              download_status?: string;
+              actual_source?: string;
+              source_name?: string;
+              file_size_mb?: number;
+              download_completed_at?: number;
+              source_switched?: boolean;
+              requested_source?: string;
+            }
+            const metadata = await safeReadFile<DownloadMetadata>(metadataFile);
 
             if (metadata && metadata.download_status === 'completed') {
               downloadedEpisodes.push(episodeIndex);
@@ -739,7 +803,9 @@ export class VideoDownloadService {
       // 忽略错误
     }
 
-    downloadsList.downloaded_episodes = downloadedEpisodes.sort((a, b) => a - b);
+    downloadsList.downloaded_episodes = downloadedEpisodes.sort(
+      (a, b) => a - b
+    );
     downloadsList.downloads = downloads;
     downloadsList.total_size_mb = downloads.reduce(
       (sum, d) => sum + (d.file_size_mb || 0),
@@ -747,7 +813,10 @@ export class VideoDownloadService {
     );
     downloadsList.last_updated = Date.now();
 
-    await atomicWriteFile(downloadsFile, JSON.stringify(downloadsList, null, 2));
+    await atomicWriteFile(
+      downloadsFile,
+      JSON.stringify(downloadsList, null, 2)
+    );
   }
 
   /**
@@ -817,7 +886,7 @@ export class VideoDownloadService {
     task.status = 'cancelled';
     task.error = '任务已取消';
     task.updated_at = Date.now();
-    
+
     // 使用 atomicWriteFile 确保原子写入，避免竞态条件
     const taskFile = path.join(this.tasksDir, `${taskId}.json`);
     await atomicWriteFile(taskFile, JSON.stringify(task, null, 2));
@@ -855,7 +924,12 @@ export class VideoDownloadService {
               if (!isNaN(episodeIndex)) {
                 const episodeDir = path.join(seriesDir, entry.name);
                 const metadataFile = path.join(episodeDir, 'download.json');
-                const metadata = await safeReadFile<any>(metadataFile);
+                interface EpisodeDownloadMetadata {
+                  download_status?: string;
+                }
+                const metadata = await safeReadFile<EpisodeDownloadMetadata>(
+                  metadataFile
+                );
 
                 if (metadata && metadata.download_status === 'completed') {
                   items.push({
@@ -924,7 +998,10 @@ export class VideoDownloadService {
   /**
    * 检查是否已下载
    */
-  async isDownloaded(seriesKey: string, episodeIndex: number): Promise<boolean> {
+  async isDownloaded(
+    seriesKey: string,
+    episodeIndex: number
+  ): Promise<boolean> {
     const episodeDir = path.join(
       this.downloadDir,
       seriesKey,
@@ -936,7 +1013,10 @@ export class VideoDownloadService {
       return false;
     }
 
-    const metadata = await safeReadFile<any>(metadataFile);
+    interface DownloadMetadata {
+      download_status?: string;
+    }
+    const metadata = await safeReadFile<DownloadMetadata>(metadataFile);
     return metadata?.download_status === 'completed';
   }
 
@@ -1019,7 +1099,7 @@ export class VideoDownloadService {
     try {
       const fs = await import('fs/promises');
       const segmentsDir = path.join(episodeDir, 'segments');
-      
+
       // 检查 segments 目录是否存在
       try {
         await fs.access(segmentsDir);
@@ -1029,12 +1109,19 @@ export class VideoDownloadService {
 
       // 检查是否有分段文件
       const files = await fs.readdir(segmentsDir);
-      const segmentFiles = files.filter((f) => f.startsWith('segment') && f.endsWith('.ts'));
-      
+      const segmentFiles = files.filter(
+        (f) => f.startsWith('segment') && f.endsWith('.ts')
+      );
+
       // 如果有分段文件但没有完成标记，说明是部分下载
       if (segmentFiles.length > 0) {
         const metadataFile = path.join(episodeDir, 'download.json');
-        const metadata = await safeReadFile<any>(metadataFile);
+        interface PartialDownloadMetadata {
+          download_status?: string;
+        }
+        const metadata = await safeReadFile<PartialDownloadMetadata>(
+          metadataFile
+        );
         // 如果 metadata 不存在或状态不是 completed，说明是部分下载
         return !metadata || metadata.download_status !== 'completed';
       }
@@ -1084,7 +1171,6 @@ export class VideoDownloadService {
           continue;
         }
 
-        const taskId = fileName.replace('.json', '');
         const taskFile = path.join(this.tasksDir, fileName);
 
         if (!validatePath(taskFile, this.tasksDir)) {
@@ -1103,8 +1189,8 @@ export class VideoDownloadService {
           return task;
         }
       }
-    } catch (error) {
-      console.error('查找活跃任务失败:', error);
+    } catch {
+      // 静默处理错误
     }
 
     return null;
@@ -1135,7 +1221,6 @@ export class VideoDownloadService {
           continue;
         }
 
-        const taskId = fileName.replace('.json', '');
         const taskFile = path.join(this.tasksDir, fileName);
 
         if (!validatePath(taskFile, this.tasksDir)) {
@@ -1159,8 +1244,8 @@ export class VideoDownloadService {
           }
         }
       }
-    } catch (error) {
-      console.error('获取活跃任务列表失败:', error);
+    } catch {
+      // 静默处理错误
     }
 
     return activeStatuses;
@@ -1171,13 +1256,13 @@ export class VideoDownloadService {
    */
   private async saveTask(task: DownloadTask): Promise<void> {
     const taskFile = path.join(this.tasksDir, `${task.task_id}.json`);
-    
+
     // 快速检查：如果 abortController 已触发，不保存（避免覆盖取消状态）
     const abortController = this.abortControllers.get(task.task_id);
     if (abortController?.signal.aborted) {
       return;
     }
-    
+
     // 读取文件中的实际状态，如果已取消则不保存（双重检查，避免竞态条件）
     try {
       const fileTask = await safeReadFile<DownloadTask>(taskFile);
@@ -1187,12 +1272,12 @@ export class VideoDownloadService {
     } catch {
       // 文件不存在，继续保存
     }
-    
+
     // 再次检查 abortController（在写入前最后检查一次）
     if (abortController?.signal.aborted) {
       return;
     }
-    
+
     await atomicWriteFile(taskFile, JSON.stringify(task, null, 2));
   }
 }

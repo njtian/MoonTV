@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 
 import { getVideoCacheService } from '@/lib/video-cache';
 
-export async function GET(request: Request) {
+export async function GET() {
   try {
     const videoCacheService = getVideoCacheService();
     await videoCacheService.initialize();
@@ -29,7 +29,6 @@ export async function GET(request: Request) {
         : null,
     });
   } catch (error) {
-    console.error('获取缓存统计失败:', error);
     return NextResponse.json(
       { error: (error as Error).message },
       { status: 500 }

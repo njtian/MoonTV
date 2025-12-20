@@ -81,23 +81,23 @@ export async function findSeriesKey(
     if (options?.fuzzyMatch) {
       const yearTolerance = options.yearTolerance || 0;
       const yearNum = parseInt(yearStr);
-      
+
       // 遍历所有条目查找相似标题
       for (const entry of index.entries) {
         const entryNormalizedTitle = normalizeTitle(entry.title);
         const entryYearNum = parseInt(entry.year || '0');
-        
+
         // 标题相似度检查（简单实现：包含关系）
-        const titleSimilar = 
+        const titleSimilar =
           normalizedTitle.includes(entryNormalizedTitle) ||
           entryNormalizedTitle.includes(normalizedTitle);
-        
+
         // 年份容差检查
-        const yearMatch = 
+        const yearMatch =
           yearTolerance === 0
             ? entry.year === yearStr
             : Math.abs(yearNum - entryYearNum) <= yearTolerance;
-        
+
         if (titleSimilar && yearMatch) {
           return entry.series_key;
         }
@@ -141,10 +141,10 @@ export async function findPossibleDuplicates(
 
   for (const entry of index.entries) {
     const entryNormalizedTitle = normalizeTitle(entry.title);
-    
+
     // 计算相似度（简单实现：基于包含关系和编辑距离）
     let similarity = 0;
-    
+
     // 标题相似度
     if (normalizedTitle === entryNormalizedTitle) {
       similarity += 100;
@@ -155,18 +155,24 @@ export async function findPossibleDuplicates(
       similarity += 50;
     } else {
       // 简单的编辑距离计算（简化版）
-      const maxLen = Math.max(normalizedTitle.length, entryNormalizedTitle.length);
-      const minLen = Math.min(normalizedTitle.length, entryNormalizedTitle.length);
+      const maxLen = Math.max(
+        normalizedTitle.length,
+        entryNormalizedTitle.length
+      );
+      const minLen = Math.min(
+        normalizedTitle.length,
+        entryNormalizedTitle.length
+      );
       if (maxLen > 0) {
         similarity += (minLen / maxLen) * 30;
       }
     }
-    
+
     // 年份匹配
     if (yearStr && entry.year === yearStr) {
       similarity += 20;
     }
-    
+
     if (similarity > 30) {
       results.push({
         series_key: entry.series_key,

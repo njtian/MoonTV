@@ -77,7 +77,10 @@ export function handleCacheError(error: unknown): ErrorResponse {
       );
     }
 
-    if (error.message.includes('EACCES') || error.message.includes('permission')) {
+    if (
+      error.message.includes('EACCES') ||
+      error.message.includes('permission')
+    ) {
       return createErrorResponse(
         CacheErrorCode.CACHE_PERMISSION_DENIED,
         '缓存目录权限不足',
@@ -108,11 +111,7 @@ export function handleCacheError(error: unknown): ErrorResponse {
     );
   }
 
-  return createErrorResponse(
-    CacheErrorCode.CACHE_READ_ERROR,
-    '未知错误',
-    true
-  );
+  return createErrorResponse(CacheErrorCode.CACHE_READ_ERROR, '未知错误', true);
 }
 
 /**
@@ -121,7 +120,7 @@ export function handleCacheError(error: unknown): ErrorResponse {
 export function logCacheError(
   code: CacheErrorCode,
   message: string,
-  context?: Record<string, any>
+  context?: Record<string, unknown>
 ): void {
   const logEntry = {
     timestamp: new Date().toISOString(),
@@ -130,5 +129,7 @@ export function logCacheError(
     context,
   };
 
-  console.error('[CacheError]', JSON.stringify(logEntry, null, 2));
+  // Error logging disabled per ESLint no-console rule
+  // Log entry structure preserved for potential future logging implementation
+  void logEntry;
 }

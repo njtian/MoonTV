@@ -1,3 +1,4 @@
+import { promises as fs } from 'fs';
 import path from 'path';
 
 import { getCacheTime } from './config';
@@ -57,56 +58,51 @@ export class VideoCacheService {
       return;
     }
 
-    try {
-      // 创建缓存目录
-      await ensureDirectory(this.cacheDir);
-      await ensureDirectory(this.videosDir);
-      await ensureDirectory(path.join(this.cacheDir, 'downloads'));
-      await ensureDirectory(path.join(this.cacheDir, 'tasks'));
+    // 创建缓存目录
+    await ensureDirectory(this.cacheDir);
+    await ensureDirectory(this.videosDir);
+    await ensureDirectory(path.join(this.cacheDir, 'downloads'));
+    await ensureDirectory(path.join(this.cacheDir, 'tasks'));
 
-      // 初始化索引文件
-      const indexExists = await safeReadFile<CacheIndex>(this.indexFile);
-      if (!indexExists) {
-        const initialIndex: CacheIndex = {
-          version: '1.0.0',
-          last_updated: Date.now(),
-          entries: [],
-          title_index: {},
-          douban_index: {},
-        };
-        await atomicWriteFile(
-          this.indexFile,
-          JSON.stringify(initialIndex, null, 2)
-        );
-      }
-
-      // 初始化统计文件
-      const statsExists = await safeReadFile<CacheStats>(this.statsFile);
-      if (!statsExists) {
-        const initialStats: CacheStats = {
-          total_cached: 0,
-          total_size_bytes: 0,
-          total_size_mb: 0,
-          oldest_cache: 0,
-          newest_cache: 0,
-          hit_count: 0,
-          miss_count: 0,
-          hit_rate: 0,
-          average_file_size_bytes: 0,
-          series_by_source: {},
-          last_cleaned: 0,
-        };
-        await atomicWriteFile(
-          this.statsFile,
-          JSON.stringify(initialStats, null, 2)
-        );
-      }
-
-      this.initialized = true;
-    } catch (error) {
-      console.error('初始化缓存目录失败:', error);
-      throw error;
+    // 初始化索引文件
+    const indexExists = await safeReadFile<CacheIndex>(this.indexFile);
+    if (!indexExists) {
+      const initialIndex: CacheIndex = {
+        version: '1.0.0',
+        last_updated: Date.now(),
+        entries: [],
+        title_index: {},
+        douban_index: {},
+      };
+      await atomicWriteFile(
+        this.indexFile,
+        JSON.stringify(initialIndex, null, 2)
+      );
     }
+
+    // 初始化统计文件
+    const statsExists = await safeReadFile<CacheStats>(this.statsFile);
+    if (!statsExists) {
+      const initialStats: CacheStats = {
+        total_cached: 0,
+        total_size_bytes: 0,
+        total_size_mb: 0,
+        oldest_cache: 0,
+        newest_cache: 0,
+        hit_count: 0,
+        miss_count: 0,
+        hit_rate: 0,
+        average_file_size_bytes: 0,
+        series_by_source: {},
+        last_cleaned: 0,
+      };
+      await atomicWriteFile(
+        this.statsFile,
+        JSON.stringify(initialStats, null, 2)
+      );
+    }
+
+    this.initialized = true;
   }
 
   /**
@@ -160,7 +156,7 @@ export class VideoCacheService {
 
     // 合并集数链接
     const episodes: { [key: string]: EpisodeLink[] } = existing?.episodes || {};
-    
+
     // 将新源的集数链接添加到缓存
     data.episodes.forEach((url, index) => {
       const episodeIndex = (index + 1).toString();
@@ -209,7 +205,9 @@ export class VideoCacheService {
     };
 
     // 计算缓存的集数索引
-    const cachedEpisodes = Object.keys(episodes).map(Number).sort((a, b) => a - b);
+    const cachedEpisodes = Object.keys(episodes)
+      .map(Number)
+      .sort((a, b) => a - b);
 
     // 构建元数据
     const meta: CacheMeta = {
@@ -230,10 +228,7 @@ export class VideoCacheService {
     };
 
     // 写入文件
-    await atomicWriteFile(
-      dataFile,
-      JSON.stringify(cachedSeries, null, 2)
-    );
+    await atomicWriteFile(dataFile, JSON.stringify(cachedSeries, null, 2));
     await atomicWriteFile(metaFile, JSON.stringify(meta, null, 2));
 
     // 更新文件大小
@@ -243,8 +238,8 @@ export class VideoCacheService {
     // 更新索引
     await this.updateIndex();
     // 异步更新统计（不阻塞）
-    this.updateStats().catch((err) => {
-      console.error('更新统计失败:', err);
+    this.updateStats().catch(() => {
+      // 静默处理错误
     });
   }
 
@@ -287,8 +282,8 @@ export class VideoCacheService {
     const deleted = await safeDeleteDirectory(seriesDir);
     if (deleted) {
       await this.updateIndex();
-      this.updateStats().catch((err) => {
-        console.error('更新统计失败:', err);
+      this.updateStats().catch(() => {
+        // 静默处理错误
       });
     }
     return deleted;
@@ -323,10 +318,7 @@ export class VideoCacheService {
       return false;
     }
 
-    await atomicWriteFile(
-      dataFile,
-      JSON.stringify(series, null, 2)
-    );
+    await atomicWriteFile(dataFile, JSON.stringify(series, null, 2));
 
     // 更新元数据
     const meta = await safeReadFile<CacheMeta>(metaFile);
@@ -492,10 +484,7 @@ export class VideoCacheService {
         options.episode_index
       ) {
         // 清理指定集的缓存
-        await this.deleteEpisode(
-          options.series_key,
-          options.episode_index
-        );
+        await this.deleteEpisode(options.series_key, options.episode_index);
         deletedCount = 1;
         // 集级别的空间释放较小，这里简化处理
         freedSpaceBytes = 0;
@@ -512,7 +501,6 @@ export class VideoCacheService {
         message: `成功清理 ${deletedCount} 个缓存`,
       };
     } catch (error) {
-      console.error('清理缓存失败:', error);
       return {
         success: false,
         deleted_count: deletedCount,
@@ -583,8 +571,8 @@ export class VideoCacheService {
     const doubanIndex: { [key: string]: string } = {};
 
     try {
-      const files = await require('fs').promises.readdir(this.videosDir);
-      
+      const files = await fs.readdir(this.videosDir);
+
       for (const file of files) {
         const seriesKey = file;
         const seriesDir = path.join(this.videosDir, seriesKey);
@@ -636,12 +624,9 @@ export class VideoCacheService {
       index.douban_index = doubanIndex;
       index.last_updated = Date.now();
 
-      await atomicWriteFile(
-        this.indexFile,
-        JSON.stringify(index, null, 2)
-      );
-    } catch (error) {
-      console.error('更新索引失败:', error);
+      await atomicWriteFile(this.indexFile, JSON.stringify(index, null, 2));
+    } catch {
+      // 静默处理错误
     }
   }
 

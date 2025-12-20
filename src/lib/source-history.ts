@@ -1,6 +1,12 @@
-import { SourceHistory, DownloadResult } from './video-cache.types';
-import { getCacheDir, safeReadFile, atomicWriteFile, ensureDirectory } from './video-cache-utils';
 import path from 'path';
+
+import { DownloadResult, SourceHistory } from './video-cache.types';
+import {
+  atomicWriteFile,
+  ensureDirectory,
+  getCacheDir,
+  safeReadFile,
+} from './video-cache-utils';
 
 const HISTORY_DIR = 'source-history';
 const MAX_RECENT_SPEEDS = 10;
@@ -8,9 +14,7 @@ const MAX_RECENT_SPEEDS = 10;
 /**
  * 获取源历史数据
  */
-export async function getSourceHistory(
-  source: string
-): Promise<SourceHistory> {
+export async function getSourceHistory(source: string): Promise<SourceHistory> {
   const cacheDir = getCacheDir();
   const historyDir = path.join(cacheDir, HISTORY_DIR);
   await ensureDirectory(historyDir);
@@ -87,7 +91,7 @@ export async function updateSourceHistory(
 /**
  * 清理旧的历史数据（可选功能）
  */
-export async function cleanupOldHistory(maxAgeDays: number = 30): Promise<void> {
+export async function cleanupOldHistory(maxAgeDays = 30): Promise<void> {
   const cacheDir = getCacheDir();
   const historyDir = path.join(cacheDir, HISTORY_DIR);
   const cutoffTime = Date.now() - maxAgeDays * 24 * 3600 * 1000;
@@ -116,7 +120,7 @@ export async function cleanupOldHistory(maxAgeDays: number = 30): Promise<void> 
         }
       }
     }
-  } catch (error) {
-    console.error('清理历史数据失败:', error);
+  } catch {
+    // 静默处理清理错误
   }
 }

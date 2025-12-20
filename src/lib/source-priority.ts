@@ -1,5 +1,5 @@
-import { SourceHistory, SourceScore } from './video-cache.types';
 import { getSourceHistory } from './source-history';
+import { SourceHistory, SourceScore } from './video-cache.types';
 
 /**
  * 计算稳定性评分
@@ -26,9 +26,10 @@ export function calculateSourceScore(
 ): SourceScore {
   const factors = {
     userSelected,
-    successRate: history.totalAttempts > 0
-      ? history.successCount / history.totalAttempts
-      : 0.5, // 默认50%成功率
+    successRate:
+      history.totalAttempts > 0
+        ? history.successCount / history.totalAttempts
+        : 0.5, // 默认50%成功率
     avgSpeed: Math.min(history.avgSpeedMBps || 0, 10), // 最高10MB/s
     stability: calculateStability(history),
   };

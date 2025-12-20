@@ -1,6 +1,6 @@
+import { randomBytes } from 'crypto';
 import { promises as fs } from 'fs';
 import path from 'path';
-import { randomBytes } from 'crypto';
 
 /**
  * 获取缓存目录路径
@@ -40,7 +40,6 @@ export async function safeReadFile<T>(
   try {
     // 如果提供了 baseDir，验证路径安全
     if (baseDir && !validatePath(filePath, baseDir)) {
-      console.error(`路径不安全: ${filePath}`);
       return null;
     }
 
@@ -50,7 +49,6 @@ export async function safeReadFile<T>(
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
       return null; // 文件不存在，返回 null
     }
-    console.error(`读取文件失败: ${filePath}`, error);
     return null;
   }
 }
@@ -73,7 +71,9 @@ export async function atomicWriteFile(
   await ensureDirectory(dir);
 
   // 生成临时文件名
-  const tempFileName = `${path.basename(filePath)}.tmp.${randomBytes(8).toString('hex')}`;
+  const tempFileName = `${path.basename(filePath)}.tmp.${randomBytes(
+    8
+  ).toString('hex')}`;
   const tempFilePath = path.join(dir, tempFileName);
 
   try {
@@ -104,7 +104,6 @@ export async function safeDeleteFile(filePath: string): Promise<boolean> {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
       return true; // 文件不存在，视为成功
     }
-    console.error(`删除文件失败: ${filePath}`, error);
     return false;
   }
 }
@@ -116,8 +115,7 @@ export async function safeDeleteDirectory(dirPath: string): Promise<boolean> {
   try {
     await fs.rm(dirPath, { recursive: true, force: true });
     return true;
-  } catch (error) {
-    console.error(`删除目录失败: ${dirPath}`, error);
+  } catch {
     return false;
   }
 }

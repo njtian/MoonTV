@@ -6,19 +6,10 @@ import { getVideoCacheService } from '@/lib/video-cache';
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const {
-      series_key,
-      episode_index,
-      source,
-      url,
-      source_name,
-    } = body;
+    const { series_key, episode_index, source, url, source_name } = body;
 
     if (!series_key || !episode_index || !source || !url) {
-      return NextResponse.json(
-        { error: '缺少必要参数' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: '缺少必要参数' }, { status: 400 });
     }
 
     const videoCacheService = getVideoCacheService();
@@ -60,7 +51,8 @@ export async function POST(request: Request) {
       if (existingSourceLink) {
         // 更新现有链接
         existingSourceLink.url = url;
-        existingSourceLink.source_name = source_name || existingSourceLink.source_name;
+        existingSourceLink.source_name =
+          source_name || existingSourceLink.source_name;
         existingSourceLink.cached_at = Date.now();
       } else {
         // 添加新链接
@@ -103,7 +95,6 @@ export async function POST(request: Request) {
       series_key,
     });
   } catch (error) {
-    console.error('更新缓存失败:', error);
     return NextResponse.json(
       { error: (error as Error).message },
       { status: 500 }

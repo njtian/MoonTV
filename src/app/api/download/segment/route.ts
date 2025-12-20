@@ -1,6 +1,7 @@
-import { NextResponse } from 'next/server';
 import { promises as fs } from 'fs';
+import { NextResponse } from 'next/server';
 import path from 'path';
+
 import { getCacheDir, validatePath } from '@/lib/video-cache-utils';
 
 export async function GET(request: Request) {
@@ -11,10 +12,7 @@ export async function GET(request: Request) {
     const segment = searchParams.get('segment');
 
     if (!seriesKey || !episodeIndex || !segment) {
-      return NextResponse.json(
-        { error: '缺少必要参数' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: '缺少必要参数' }, { status: 400 });
     }
 
     const cacheDir = getCacheDir();
@@ -28,20 +26,14 @@ export async function GET(request: Request) {
     );
 
     if (!validatePath(segmentPath, cacheDir)) {
-      return NextResponse.json(
-        { error: '路径不安全' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: '路径不安全' }, { status: 400 });
     }
 
     // 检查文件是否存在
     try {
       await fs.access(segmentPath);
     } catch {
-      return NextResponse.json(
-        { error: '分段文件不存在' },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: '分段文件不存在' }, { status: 404 });
     }
 
     // 读取文件
@@ -76,7 +68,6 @@ export async function GET(request: Request) {
       },
     });
   } catch (error) {
-    console.error('获取分段文件失败:', error);
     return NextResponse.json(
       { error: (error as Error).message },
       { status: 500 }

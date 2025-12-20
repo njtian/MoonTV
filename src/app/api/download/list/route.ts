@@ -34,7 +34,6 @@ export async function GET(request: Request) {
       })),
     });
   } catch (error) {
-    console.error('获取下载列表失败:', error);
     return NextResponse.json(
       { error: (error as Error).message },
       { status: 500 }

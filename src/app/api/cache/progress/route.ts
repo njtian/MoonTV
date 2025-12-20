@@ -10,10 +10,7 @@ export async function GET(request: Request) {
     const taskId = searchParams.get('task_id');
 
     if (!taskId) {
-      return NextResponse.json(
-        { error: '缺少 task_id 参数' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: '缺少 task_id 参数' }, { status: 400 });
     }
 
     const cacheDir = getCacheDir();
@@ -21,10 +18,7 @@ export async function GET(request: Request) {
     const task = await safeReadFile<CleanTask>(taskFile);
 
     if (!task) {
-      return NextResponse.json(
-        { error: '任务不存在' },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: '任务不存在' }, { status: 404 });
     }
 
     return NextResponse.json({
@@ -35,18 +29,17 @@ export async function GET(request: Request) {
       total: task.total,
       message: task.message,
       started_at: new Date(task.started_at).toISOString(),
-      estimated_completion: task.status === 'running' && task.progress > 0
-        ? new Date(
-            task.started_at +
-              (Date.now() - task.started_at) / task.progress
-          ).toISOString()
-        : null,
+      estimated_completion:
+        task.status === 'running' && task.progress > 0
+          ? new Date(
+              task.started_at + (Date.now() - task.started_at) / task.progress
+            ).toISOString()
+          : null,
       deleted_count: task.deleted_count,
       freed_space_mb: task.freed_space_mb,
       error: task.error,
     });
   } catch (error) {
-    console.error('获取任务进度失败:', error);
     return NextResponse.json(
       { error: (error as Error).message },
       { status: 500 }

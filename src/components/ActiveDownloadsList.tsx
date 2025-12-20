@@ -1,13 +1,16 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
-import DownloadProgress from './DownloadProgress';
+import { useCallback, useEffect, useRef, useState } from 'react';
+
 import {
-  getAllActiveTasks,
   cancelDownload,
+  getAllActiveTasks,
   getDownloadStatus,
 } from '@/lib/video-cache.client';
 import { DownloadStatus } from '@/lib/video-cache.types';
+
+import DownloadProgress from './DownloadProgress';
+import { useDownloadStatusSafe } from './DownloadStatusProvider';
 
 interface ActiveDownloadsListProps {
   onTaskComplete?: () => void;
@@ -51,9 +54,8 @@ export default function ActiveDownloadsList({
   }, [downloadStatusContext, onTaskComplete]);
 
   // 独立轮询逻辑（当 Context 不可用时）
-  const loadActiveTasks = async () => {
+  const loadActiveTasks = useCallback(async () => {
     try {
-      const { getAllActiveTasks } = await import('@/lib/video-cache.client');
       const data = await getAllActiveTasks();
       if (!mountedRef.current) return;
 
@@ -84,7 +86,7 @@ export default function ActiveDownloadsList({
         setLoading(false);
       }
     }
-  };
+  }, [onTaskComplete]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -111,7 +113,7 @@ export default function ActiveDownloadsList({
         clearInterval(pollingIntervalRef.current);
       }
     };
-  }, [onTaskComplete, downloadStatusContext]);
+  }, [downloadStatusContext, loadActiveTasks]);
 
   const handleCancel = async (taskId: string) => {
     try {
@@ -131,7 +133,12 @@ export default function ActiveDownloadsList({
     // 检查任务是否已完成或失败，如果是则从列表中移除
     try {
       const status = await getDownloadStatus(taskId);
-      if (!status || status.status === 'completed' || status.status === 'failed' || status.status === 'cancelled') {
+      if (
+        !status ||
+        status.status === 'completed' ||
+        status.status === 'failed' ||
+        status.status === 'cancelled'
+      ) {
         setTasks((prev) => prev.filter((task) => task.task_id !== taskId));
         onTaskComplete?.();
       }
@@ -143,22 +150,22 @@ export default function ActiveDownloadsList({
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-12">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-500"></div>
-        <span className="ml-2 text-gray-600 dark:text-gray-400">加载中...</span>
+      <div className='flex items-center justify-center py-12'>
+        <div className='animate-spin rounded-full h-8 w-8 border-b-2 border-green-500'></div>
+        <span className='ml-2 text-gray-600 dark:text-gray-400'>加载中...</span>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="flex items-center justify-center py-12">
-        <div className="text-center">
-          <div className="text-red-500 text-2xl mb-2">⚠️</div>
-          <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+      <div className='flex items-center justify-center py-12'>
+        <div className='text-center'>
+          <div className='text-red-500 text-2xl mb-2'>⚠️</div>
+          <p className='text-sm text-red-600 dark:text-red-400'>{error}</p>
           <button
             onClick={loadActiveTasks}
-            className="mt-4 px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 transition-colors"
+            className='mt-4 px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 transition-colors'
           >
             重试
           </button>
@@ -169,18 +176,23 @@ export default function ActiveDownloadsList({
 
   if (tasks.length === 0) {
     return (
-      <div className="flex items-center justify-center py-12">
-        <div className="text-center">
-          <p className="text-gray-600 dark:text-gray-400">暂无进行中的下载任务</p>
+      <div className='flex items-center justify-center py-12'>
+        <div className='text-center'>
+          <p className='text-gray-600 dark:text-gray-400'>
+            暂无进行中的下载任务
+          </p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-2">
+    <div className='space-y-2'>
       {tasks.map((task) => (
-        <div key={task.task_id} className="bg-gray-50 dark:bg-gray-700/50 rounded-lg">
+        <div
+          key={task.task_id}
+          className='bg-gray-50 dark:bg-gray-700/50 rounded-lg'
+        >
           <DownloadProgress
             status={task}
             onCancel={() => handleCancel(task.task_id)}

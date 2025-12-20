@@ -1,7 +1,8 @@
 'use client';
 
+import { AlertCircle, CheckCircle, Download, X } from 'lucide-react';
 import React from 'react';
-import { X, Download, CheckCircle, AlertCircle } from 'lucide-react';
+
 import { DownloadStatus } from '@/lib/video-cache.types';
 
 interface DownloadProgressProps {
@@ -20,7 +21,9 @@ export default function DownloadProgress({
     downloaded_bytes: number;
     updated_at: number;
   } | null>(null);
-  const [calculatedSpeed, setCalculatedSpeed] = React.useState<number | null>(null);
+  const [calculatedSpeed, setCalculatedSpeed] = React.useState<number | null>(
+    null
+  );
 
   React.useEffect(() => {
     if (status.status === 'downloading' && status.downloaded_bytes > 0) {
@@ -30,10 +33,10 @@ export default function DownloadProgress({
       if (prev && prev.downloaded_bytes < status.downloaded_bytes) {
         const timeDiff = (now - prev.updated_at) / 1000; // 秒
         const bytesDiff = status.downloaded_bytes - prev.downloaded_bytes;
-        
+
         if (timeDiff > 0) {
           // 计算瞬时速度 (MB/s)
-          const speedMBps = (bytesDiff / (1024 * 1024)) / timeDiff;
+          const speedMBps = bytesDiff / (1024 * 1024) / timeDiff;
           setCalculatedSpeed(speedMBps);
         }
       }
@@ -50,9 +53,9 @@ export default function DownloadProgress({
 
   // 优先使用后端速度，如果为0则使用前端计算的瞬时速度
   const displaySpeed = React.useMemo(() => {
-    return status.download_speed_mbps > 0 
-      ? status.download_speed_mbps 
-      : (calculatedSpeed || 0);
+    return status.download_speed_mbps > 0
+      ? status.download_speed_mbps
+      : calculatedSpeed || 0;
   }, [status.download_speed_mbps, calculatedSpeed]);
 
   const formatBytes = (bytes: number): string => {
@@ -84,44 +87,27 @@ export default function DownloadProgress({
   const getStatusIcon = () => {
     switch (status.status) {
       case 'completed':
-        return <CheckCircle className="w-6 h-6 text-green-500" />;
+        return <CheckCircle className='w-6 h-6 text-green-500' />;
       case 'failed':
-        return <AlertCircle className="w-6 h-6 text-red-500" />;
+        return <AlertCircle className='w-6 h-6 text-red-500' />;
       case 'downloading':
-        return <Download className="w-6 h-6 text-blue-500 animate-pulse" />;
+        return <Download className='w-6 h-6 text-blue-500 animate-pulse' />;
       default:
-        return <Download className="w-6 h-6 text-gray-500" />;
-    }
-  };
-
-  const getStatusText = () => {
-    switch (status.status) {
-      case 'completed':
-        return '下载完成';
-      case 'failed':
-        return '下载失败';
-      case 'downloading':
-        return '下载中';
-      case 'pending':
-        return '等待中';
-      case 'cancelled':
-        return '已取消';
-      default:
-        return '未知状态';
+        return <Download className='w-6 h-6 text-gray-500' />;
     }
   };
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-3 w-full">
+    <div className='bg-white dark:bg-gray-800 rounded-lg shadow p-3 w-full'>
       {/* 标题栏 */}
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2 flex-1 min-w-0">
+      <div className='flex items-center justify-between mb-2'>
+        <div className='flex items-center gap-2 flex-1 min-w-0'>
           {getStatusIcon()}
-          <div className="min-w-0 flex-1">
-            <h3 className="text-base font-semibold text-gray-900 dark:text-white truncate">
+          <div className='min-w-0 flex-1'>
+            <h3 className='text-base font-semibold text-gray-900 dark:text-white truncate'>
               {status.episode_title || `第${status.episode_index}集`}
             </h3>
-            <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
+            <p className='text-xs text-gray-500 dark:text-gray-400 truncate'>
               {status.title}
             </p>
           </div>
@@ -129,27 +115,29 @@ export default function DownloadProgress({
         {onClose && status.status !== 'downloading' && (
           <button
             onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 flex-shrink-0 ml-2"
+            className='text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 flex-shrink-0 ml-2'
           >
-            <X className="w-4 h-4" />
+            <X className='w-4 h-4' />
           </button>
         )}
       </div>
 
       {/* 进度信息 */}
       {status.status === 'downloading' && (
-        <div className="mb-2">
+        <div className='mb-2'>
           {/* 进度条 */}
-          <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2 mb-1.5">
+          <div className='w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2 mb-1.5'>
             <div
-              className="bg-blue-500 h-2 rounded-full transition-all duration-300"
+              className='bg-blue-500 h-2 rounded-full transition-all duration-300'
               style={{ width: `${status.progress * 100}%` }}
             />
           </div>
 
           {/* 进度文本 */}
-          <div className="flex justify-between items-center text-xs text-gray-600 dark:text-gray-400 mb-1">
-            <span className="font-medium">{`${(status.progress * 100).toFixed(1)}%`}</span>
+          <div className='flex justify-between items-center text-xs text-gray-600 dark:text-gray-400 mb-1'>
+            <span className='font-medium'>{`${(status.progress * 100).toFixed(
+              1
+            )}%`}</span>
             <span>
               {formatBytes(status.downloaded_bytes)}
               {status.total_bytes > status.downloaded_bytes && (
@@ -159,37 +147,40 @@ export default function DownloadProgress({
           </div>
 
           {/* 速度和剩余时间 */}
-          <div className="flex justify-between text-xs text-gray-500 dark:text-gray-500">
+          <div className='flex justify-between text-xs text-gray-500 dark:text-gray-500'>
             <span>
-              速度: {displaySpeed > 0 
-                ? formatSpeed(displaySpeed)
-                : '0 KB/s'}
+              速度: {displaySpeed > 0 ? formatSpeed(displaySpeed) : '0 KB/s'}
             </span>
             {status.estimated_time_remaining_seconds > 0 && (
               <span>
                 剩余: {formatTime(status.estimated_time_remaining_seconds)}
               </span>
             )}
-            {displaySpeed > 0 && status.total_bytes > status.downloaded_bytes && (
-              <span>
-                剩余: {formatTime(
-                  Math.ceil((status.total_bytes - status.downloaded_bytes) / (displaySpeed * 1024 * 1024))
-                )}
-              </span>
-            )}
+            {displaySpeed > 0 &&
+              status.total_bytes > status.downloaded_bytes && (
+                <span>
+                  剩余:{' '}
+                  {formatTime(
+                    Math.ceil(
+                      (status.total_bytes - status.downloaded_bytes) /
+                        (displaySpeed * 1024 * 1024)
+                    )
+                  )}
+                </span>
+              )}
           </div>
         </div>
       )}
 
       {/* 完成状态 */}
       {status.status === 'completed' && (
-        <div className="mb-2">
-          <div className="bg-green-50 dark:bg-green-900/20 rounded p-2">
-            <p className="text-xs text-green-700 dark:text-green-400">
+        <div className='mb-2'>
+          <div className='bg-green-50 dark:bg-green-900/20 rounded p-2'>
+            <p className='text-xs text-green-700 dark:text-green-400'>
               ✓ 下载完成
             </p>
             {status.total_bytes > 0 && (
-              <p className="text-xs text-green-600 dark:text-green-500 mt-0.5">
+              <p className='text-xs text-green-600 dark:text-green-500 mt-0.5'>
                 文件大小: {formatBytes(status.total_bytes)}
               </p>
             )}
@@ -199,13 +190,11 @@ export default function DownloadProgress({
 
       {/* 失败状态 */}
       {status.status === 'failed' && (
-        <div className="mb-2">
-          <div className="bg-red-50 dark:bg-red-900/20 rounded p-2">
-            <p className="text-xs text-red-700 dark:text-red-400">
-              ✗ 下载失败
-            </p>
+        <div className='mb-2'>
+          <div className='bg-red-50 dark:bg-red-900/20 rounded p-2'>
+            <p className='text-xs text-red-700 dark:text-red-400'>✗ 下载失败</p>
             {status.error && (
-              <p className="text-xs text-red-600 dark:text-red-500 mt-0.5 truncate">
+              <p className='text-xs text-red-600 dark:text-red-500 mt-0.5 truncate'>
                 {status.error}
               </p>
             )}
@@ -214,22 +203,22 @@ export default function DownloadProgress({
       )}
 
       {/* 源信息和操作按钮 */}
-      <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
-        <div className="flex items-center gap-3 text-xs">
-          <span className="text-gray-500 dark:text-gray-400">
+      <div className='flex items-center justify-between mt-2 pt-2 border-t border-gray-200 dark:border-gray-700'>
+        <div className='flex items-center gap-3 text-xs'>
+          <span className='text-gray-500 dark:text-gray-400'>
             {status.requested_source}
           </span>
           {status.source_switched && status.switched_sources.length > 0 && (
-            <span className="text-yellow-600 dark:text-yellow-500">
+            <span className='text-yellow-600 dark:text-yellow-500'>
               ⚠ 已切换
             </span>
           )}
         </div>
-        <div className="flex gap-2">
+        <div className='flex gap-2'>
           {status.status === 'downloading' && onCancel && (
             <button
               onClick={onCancel}
-              className="px-2 py-1 text-xs bg-red-500 text-white rounded hover:bg-red-600 transition-colors"
+              className='px-2 py-1 text-xs bg-red-500 text-white rounded hover:bg-red-600 transition-colors'
             >
               取消
             </button>
@@ -237,7 +226,7 @@ export default function DownloadProgress({
           {onClose && status.status !== 'downloading' && (
             <button
               onClick={onClose}
-              className="px-2 py-1 text-xs bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+              className='px-2 py-1 text-xs bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors'
             >
               关闭
             </button>

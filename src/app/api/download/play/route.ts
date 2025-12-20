@@ -1,8 +1,9 @@
-import { NextResponse } from 'next/server';
-import { getVideoDownloadService } from '@/lib/video-download-service';
 import { promises as fs } from 'fs';
+import { NextResponse } from 'next/server';
 import path from 'path';
+
 import { getCacheDir, validatePath } from '@/lib/video-cache-utils';
+import { getVideoDownloadService } from '@/lib/video-download-service';
 
 export async function GET(request: Request) {
   try {
@@ -11,10 +12,7 @@ export async function GET(request: Request) {
     const episodeIndex = searchParams.get('episode_index');
 
     if (!seriesKey || !episodeIndex) {
-      return NextResponse.json(
-        { error: '缺少必要参数' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: '缺少必要参数' }, { status: 400 });
     }
 
     const videoDownloadService = getVideoDownloadService();
@@ -27,10 +25,7 @@ export async function GET(request: Request) {
     );
 
     if (!isDownloaded) {
-      return NextResponse.json(
-        { error: '该集未下载' },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: '该集未下载' }, { status: 404 });
     }
 
     // Repair AES-128 encrypted downloads (ensure playlist has EXT-X-KEY and key file exists)
@@ -40,9 +35,9 @@ export async function GET(request: Request) {
         seriesKey,
         parseInt(episodeIndex, 10)
       );
-    } catch (e) {
+    } catch {
       // don't fail playback endpoint; worst case HLS will error and user can re-download
-      console.warn('ensurePlayableHlsDownload failed:', e);
+      // Silently ignore errors to allow playback to continue
     }
 
     // 获取播放列表文件路径
@@ -56,10 +51,7 @@ export async function GET(request: Request) {
     );
 
     if (!validatePath(playlistFile, cacheDir)) {
-      return NextResponse.json(
-        { error: '路径不安全' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: '路径不安全' }, { status: 400 });
     }
 
     // 读取M3U8文件
@@ -73,18 +65,17 @@ export async function GET(request: Request) {
     // 如果host是0.0.0.0，替换为localhost
     const finalHost = host.replace(/^0\.0\.0\.0:/, 'localhost:');
     const baseUrl = `${url.protocol}//${finalHost}`;
-    
+
     // 替换相对路径为绝对URL
     // 匹配 segments/segmentXXX.ts 这样的相对路径（行首或前面有#EXTINF的行）
     // 需要确保URL是完整的绝对路径，避免HLS.js解析错误
-    content = content.replace(
-      /^segments\/(.+)$/gm,
-      (match, filename) => {
-        const absoluteUrl = `${baseUrl}/api/download/segment?series_key=${encodeURIComponent(seriesKey)}&episode_index=${episodeIndex}&segment=${encodeURIComponent(filename)}`;
-        return absoluteUrl;
-      }
-    );
-    
+    content = content.replace(/^segments\/(.+)$/gm, (match, filename) => {
+      const absoluteUrl = `${baseUrl}/api/download/segment?series_key=${encodeURIComponent(
+        seriesKey
+      )}&episode_index=${episodeIndex}&segment=${encodeURIComponent(filename)}`;
+      return absoluteUrl;
+    });
+
     // 确保所有URL都是绝对路径（如果还有相对路径，也转换）
     // 这可以处理一些边缘情况
     const lines = content.split('\n');
@@ -98,7 +89,11 @@ export async function GET(request: Request) {
         // 如果是相对路径，转换为绝对URL
         if (line.startsWith('segments/')) {
           const filename = line.replace('segments/', '');
-          return `${baseUrl}/api/download/segment?series_key=${encodeURIComponent(seriesKey)}&episode_index=${episodeIndex}&segment=${encodeURIComponent(filename)}`;
+          return `${baseUrl}/api/download/segment?series_key=${encodeURIComponent(
+            seriesKey
+          )}&episode_index=${episodeIndex}&segment=${encodeURIComponent(
+            filename
+          )}`;
         }
       }
       return line;
@@ -108,13 +103,13 @@ export async function GET(request: Request) {
     // Rewrite local key URI (key.key) to an absolute API URL
     // Example: #EXT-X-KEY:METHOD=AES-128,URI="key.key",IV=...
     content = content.replace(
-      /#EXT-X-KEY:([^\n]*?)URI=\"(key\.key)\"([^\n]*)/g,
+      /#EXT-X-KEY:([^\n]*?)URI="(key\.key)"([^\n]*)/g,
       (_m, pre, _uri, post) => {
-        return `#EXT-X-KEY:${pre}URI=\"${baseUrl}/api/download/key?series_key=${encodeURIComponent(
+        return `#EXT-X-KEY:${pre}URI="${baseUrl}/api/download/key?series_key=${encodeURIComponent(
           seriesKey
         )}&episode_index=${encodeURIComponent(
           episodeIndex
-        )}&key=${encodeURIComponent('key.key')}\"${post}`;
+        )}&key=${encodeURIComponent('key.key')}"${post}`;
       }
     );
 
@@ -129,7 +124,6 @@ export async function GET(request: Request) {
       },
     });
   } catch (error) {
-    console.error('播放已下载文件失败:', error);
     return NextResponse.json(
       { error: (error as Error).message },
       { status: 500 }

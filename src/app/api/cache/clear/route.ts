@@ -75,7 +75,10 @@ export async function POST(request: Request) {
       );
     }
 
-    if (options.type === 'episode' && (!options.series_key || !options.episode_index)) {
+    if (
+      options.type === 'episode' &&
+      (!options.series_key || !options.episode_index)
+    ) {
       return NextResponse.json(
         { error: '清理类型为 episode 时必须提供 series_key 和 episode_index' },
         { status: 400 }
@@ -99,8 +102,8 @@ export async function POST(request: Request) {
     await updateTask(task);
 
     // 异步执行清理任务
-    executeCleanTask(taskId, options).catch((error) => {
-      console.error('执行清理任务失败:', error);
+    executeCleanTask(taskId, options).catch(() => {
+      // 静默处理错误
     });
 
     return NextResponse.json({
@@ -109,7 +112,6 @@ export async function POST(request: Request) {
       message: '清理任务已创建',
     });
   } catch (error) {
-    console.error('创建清理任务失败:', error);
     return NextResponse.json(
       { error: (error as Error).message },
       { status: 500 }

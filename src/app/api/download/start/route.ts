@@ -1,27 +1,17 @@
 import { NextResponse } from 'next/server';
-import { getVideoDownloadService } from '@/lib/video-download-service';
-import { DownloadOptions } from '@/lib/video-cache.types';
+
 import { getVideoCacheService } from '@/lib/video-cache';
-import { getDetailFromApi } from '@/lib/downstream';
-import { getAvailableApiSites } from '@/lib/config';
+import { DownloadOptions } from '@/lib/video-cache.types';
+import { getVideoDownloadService } from '@/lib/video-download-service';
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const {
-      series_key,
-      episode_index,
-      source,
-      url,
-      title,
-      episode_title,
-    } = body;
+    const { series_key, episode_index, source, url, title, episode_title } =
+      body;
 
     if (!series_key || !episode_index || !source || !title) {
-      return NextResponse.json(
-        { error: '缺少必要参数' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: '缺少必要参数' }, { status: 400 });
     }
 
     const videoDownloadService = getVideoDownloadService();
@@ -97,7 +87,6 @@ export async function POST(request: Request) {
       status: task.status,
     });
   } catch (error) {
-    console.error('创建下载任务失败:', error);
     return NextResponse.json(
       { error: (error as Error).message },
       { status: 500 }

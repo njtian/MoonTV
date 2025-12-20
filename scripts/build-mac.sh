@@ -22,13 +22,12 @@ rm -rf dist-electron/MoonTV-mac-*.dmg
 echo "📦 安装依赖..."
 pnpm install
 
-# 构建 Next.js 应用
-echo "🏗️  构建 Next.js 应用..."
-pnpm build
+# 跳过 Next.js 构建（Electron 直接加载网页）
+echo "🌐 Electron 将直接加载网页，跳过 Next.js 构建..."
 
 # 构建 Mac 版本
 echo "🍎 构建 Mac 版本..."
-pnpm electron:pack:mac
+NODE_ENV=production pnpm electron:pack:mac
 
 # 检查构建结果
 if [ ! -d "dist-electron/mac/MoonTV.app" ]; then
@@ -69,7 +68,7 @@ cat > "dist-electron/download-info.json" << EOF
   "fileName": "MoonTV-mac-v${VERSION}-${BUILD_DATE}.tar.gz",
   "fileSize": "$FILE_SIZE",
   "platform": "macOS",
-  "architectures": ["x64", "arm64"],
+  "architectures": ["x64"],
   "description": "MoonTV Desktop Application for macOS"
 }
 EOF

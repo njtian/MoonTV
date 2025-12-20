@@ -4,7 +4,7 @@ import { getCacheTime, getConfig } from '@/lib/config';
 import { searchFromApi } from '@/lib/downstream';
 import { yellowWords } from '@/lib/yellow';
 
-export const runtime = 'edge';
+// export const runtime = 'edge'; // 暂时禁用，因为需要访问数据库
 
 // OrionTV 兼容接口
 export async function GET(request: Request) {

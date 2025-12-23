@@ -1,17 +1,18 @@
 'use client';
 
-import { Download, Check, X, Loader2, Trash2, Play } from 'lucide-react';
-import { useEffect, useState, useRef } from 'react';
+import { Check, Download, Loader2, Play, Trash2, X } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+
 import {
-  startDownload,
-  getDownloadStatus,
   cancelDownload,
-  isEpisodeDownloaded,
   deleteDownload,
-  hasPartialDownload,
   getAllActiveTasks,
+  getDownloadStatus,
+  hasPartialDownload,
+  isEpisodeDownloaded,
+  startDownload,
 } from '@/lib/video-cache.client';
-import { DownloadStatus } from '@/lib/video-cache.types';
+
 import { useDownloadStatusSafe } from '@/components/DownloadStatusProvider';
 
 interface DownloadButtonProps {
@@ -61,7 +62,6 @@ export default function DownloadButton({
 
   const [state, setState] = useState<DownloadState>('idle');
   const [progress, setProgress] = useState(0);
-  const [downloadSpeed, setDownloadSpeed] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [taskId, setTaskId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState(false); // 是否处于准备删除状态
@@ -70,7 +70,7 @@ export default function DownloadButton({
   const statusIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const deleteTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isMountedRef = useRef(true);
-  
+
   // 从 Context 获取任务状态
   const taskStatus = downloadStatusContext
     ? downloadStatusContext.getTaskStatus(seriesKey, episodeIndex)
@@ -89,11 +89,13 @@ export default function DownloadButton({
     }
 
     // 如果 Context 中有任务状态，更新组件状态
-    if (taskStatus.status === 'pending' || taskStatus.status === 'downloading') {
+    if (
+      taskStatus.status === 'pending' ||
+      taskStatus.status === 'downloading'
+    ) {
       setTaskId(taskStatus.task_id);
       setState('downloading');
       setProgress(taskStatus.progress);
-      setDownloadSpeed(taskStatus.download_speed_mbps);
       setHasPartial(false);
       setPendingDelete(false);
       setError(taskStatus.error || null);
@@ -112,14 +114,135 @@ export default function DownloadButton({
       setError(taskStatus.error || '下载失败');
       setPendingDelete(false);
     }
-  }, [
-    taskStatus?.task_id,
-    taskStatus?.status,
-    taskStatus?.progress,
-    taskStatus?.download_speed_mbps,
-    taskStatus?.error,
-    downloadStatusContext,
-  ]);
+  }, [taskStatus, downloadStatusContext]);
+
+  // 独立轮询逻辑（仅在未使用 Context 时使用）
+  const startPolling = useCallback(
+    (tid: string, onMissing?: () => Promise<void>) => {
+      // 如果使用 Context，不需要独立轮询
+      if (downloadStatusContext) {
+        return;
+      }
+
+      if (statusIntervalRef.current) {
+        clearInterval(statusIntervalRef.current);
+      }
+
+      statusIntervalRef.current = setInterval(async () => {
+        try {
+          const status = await getDownloadStatus(tid);
+          if (!status) {
+            if (onMissing) {
+              await onMissing();
+            }
+            if (statusIntervalRef.current) {
+              clearInterval(statusIntervalRef.current);
+              statusIntervalRef.current = null;
+            }
+            return;
+          }
+
+          if (!isMountedRef.current) return;
+
+          setProgress(status.progress);
+
+          if (status.status === 'completed') {
+            setState('completed');
+            setProgress(100);
+            setPendingDelete(false); // 重置准备删除状态
+            setHasPartial(false); // 重置部分下载状态
+            if (statusIntervalRef.current) {
+              clearInterval(statusIntervalRef.current);
+              statusIntervalRef.current = null;
+            }
+          } else if (status.status === 'failed') {
+            setState('failed');
+            setError(status.error || '下载失败');
+            setPendingDelete(false); // 重置准备删除状态
+            // 失败时检查是否有部分下载
+            const partial = await hasPartialDownload(seriesKey, episodeIndex);
+            setHasPartial(partial);
+            if (statusIntervalRef.current) {
+              clearInterval(statusIntervalRef.current);
+              statusIntervalRef.current = null;
+            }
+          } else if (status.status === 'cancelled') {
+            setState('cancelled');
+            setPendingDelete(false); // 重置准备删除状态
+            // 取消时检查是否有部分下载
+            const partial = await hasPartialDownload(seriesKey, episodeIndex);
+            setHasPartial(partial);
+            if (statusIntervalRef.current) {
+              clearInterval(statusIntervalRef.current);
+              statusIntervalRef.current = null;
+            }
+          }
+        } catch (error) {
+          // 继续轮询，不中断
+          setError((error as Error).message || '获取下载状态失败');
+        }
+      }, 5000); // 每5秒查询一次
+    },
+    [downloadStatusContext, episodeIndex, seriesKey]
+  );
+
+  const checkDownloaded = useCallback(async () => {
+    try {
+      // 首先检查是否有正在进行的下载任务
+      try {
+        const activeTasks = await getAllActiveTasks();
+        const activeTask = activeTasks.tasks.find(
+          (task) =>
+            task.series_key === seriesKey &&
+            task.episode_index === episodeIndex &&
+            (task.status === 'pending' || task.status === 'downloading')
+        );
+
+        if (activeTask && isMountedRef.current) {
+          // 找到正在进行的任务，恢复下载状态
+          setTaskId(activeTask.task_id);
+          setState(
+            activeTask.status === 'pending' ? 'downloading' : 'downloading'
+          );
+          setProgress(activeTask.progress);
+          setHasPartial(false);
+          setPendingDelete(false);
+
+          // 如果使用 Context，刷新状态；否则启动独立轮询
+          if (downloadStatusContext) {
+            await downloadStatusContext.refresh();
+          } else {
+            startPolling(activeTask.task_id, checkDownloaded);
+          }
+          return;
+        }
+      } catch {
+        // 继续检查其他状态
+      }
+
+      // 检查是否已下载
+      const downloaded = await isEpisodeDownloaded(seriesKey, episodeIndex);
+      if (downloaded && isMountedRef.current) {
+        setState('completed');
+        setPendingDelete(false); // 重置准备删除状态
+        setHasPartial(false);
+      } else if (isMountedRef.current) {
+        // 检查是否有部分下载的文件
+        const partial = await hasPartialDownload(seriesKey, episodeIndex);
+        if (isMountedRef.current) {
+          setHasPartial(partial);
+          setState('idle');
+          setPendingDelete(false); // 重置准备删除状态
+        }
+      }
+    } catch {
+      if (isMountedRef.current) {
+        setState('idle');
+        setPendingDelete(false); // 重置准备删除状态
+        setHasPartial(false);
+      }
+    }
+  }, [downloadStatusContext, episodeIndex, seriesKey, startPolling]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -155,67 +278,15 @@ export default function DownloadButton({
         deleteTimeoutRef.current = null;
       }
     };
-  }, [seriesKey, episodeIndex, downloaded, autoCheck]);
-
-  const checkDownloaded = async () => {
-    try {
-      // 首先检查是否有正在进行的下载任务
-      try {
-        const activeTasks = await getAllActiveTasks();
-        const activeTask = activeTasks.tasks.find(
-          (task) =>
-            task.series_key === seriesKey &&
-            task.episode_index === episodeIndex &&
-            (task.status === 'pending' || task.status === 'downloading')
-        );
-
-        if (activeTask && isMountedRef.current) {
-          // 找到正在进行的任务，恢复下载状态
-          setTaskId(activeTask.task_id);
-          setState(activeTask.status === 'pending' ? 'downloading' : 'downloading');
-          setProgress(activeTask.progress);
-          setDownloadSpeed(activeTask.download_speed_mbps);
-          setHasPartial(false);
-          setPendingDelete(false);
-          
-          // 如果使用 Context，刷新状态；否则启动独立轮询
-          if (downloadStatusContext) {
-            await downloadStatusContext.refresh();
-          } else {
-            startPolling(activeTask.task_id);
-          }
-          return;
-        }
-      } catch (error) {
-        console.warn('检查活跃任务失败:', error);
-        // 继续检查其他状态
-      }
-
-      // 检查是否已下载
-      const downloaded = await isEpisodeDownloaded(seriesKey, episodeIndex);
-      if (downloaded && isMountedRef.current) {
-        setState('completed');
-        setPendingDelete(false); // 重置准备删除状态
-        setHasPartial(false);
-      } else if (isMountedRef.current) {
-        // 检查是否有部分下载的文件
-        const partial = await hasPartialDownload(seriesKey, episodeIndex);
-        if (isMountedRef.current) {
-          setHasPartial(partial);
-          setState('idle');
-          setPendingDelete(false); // 重置准备删除状态
-          console.log(`[DownloadButton] ${seriesKey} 第${episodeIndex}集 - 部分下载: ${partial}`);
-        }
-      }
-    } catch (error) {
-      console.warn('检查下载状态失败:', error);
-      if (isMountedRef.current) {
-        setState('idle');
-        setPendingDelete(false); // 重置准备删除状态
-        setHasPartial(false);
-      }
-    }
-  };
+  }, [
+    seriesKey,
+    episodeIndex,
+    downloaded,
+    autoCheck,
+    downloadStatusContext,
+    taskStatus,
+    checkDownloaded,
+  ]);
 
   const handleDownload = async () => {
     if (state === 'downloading' || state === 'checking') {
@@ -258,20 +329,22 @@ export default function DownloadButton({
       setTaskId(result.task_id);
       setState('downloading');
       setHasPartial(false); // 开始下载后重置部分下载状态
-      
+
       // 如果使用 Context，刷新状态；否则启动独立轮询
       if (downloadStatusContext) {
         await downloadStatusContext.refresh();
       } else {
-        startPolling(result.task_id);
+        startPolling(result.task_id, checkDownloaded);
       }
     } catch (error) {
-      console.error('开始下载失败:', error);
       const errorMessage = (error as Error).message || '下载失败';
       setError(errorMessage);
-      
+
       // 如果错误是"已有下载任务"，尝试查找并恢复该任务
-      if (errorMessage.includes('已有下载任务') || errorMessage.includes('下载中')) {
+      if (
+        errorMessage.includes('已有下载任务') ||
+        errorMessage.includes('下载中')
+      ) {
         try {
           const activeTasks = await getAllActiveTasks();
           const activeTask = activeTasks.tasks.find(
@@ -286,86 +359,18 @@ export default function DownloadButton({
             setTaskId(activeTask.task_id);
             setState('downloading');
             setProgress(activeTask.progress);
-            setDownloadSpeed(activeTask.download_speed_mbps);
             setError(null);
             setHasPartial(false);
-            startPolling(activeTask.task_id);
+            startPolling(activeTask.task_id, checkDownloaded);
             return;
           }
         } catch (recoveryError) {
-          console.warn('恢复下载任务失败:', recoveryError);
+          setError((recoveryError as Error).message || '下载失败');
         }
       }
-      
+
       setState('failed');
     }
-  };
-
-  // 独立轮询逻辑（仅在未使用 Context 时使用）
-  const startPolling = (tid: string) => {
-    // 如果使用 Context，不需要独立轮询
-    if (downloadStatusContext) {
-      return;
-    }
-
-    if (statusIntervalRef.current) {
-      clearInterval(statusIntervalRef.current);
-    }
-
-    statusIntervalRef.current = setInterval(async () => {
-      try {
-        const status = await getDownloadStatus(tid);
-        if (!status) {
-          // 任务不存在，可能已完成或失败
-          await checkDownloaded();
-          if (statusIntervalRef.current) {
-            clearInterval(statusIntervalRef.current);
-            statusIntervalRef.current = null;
-          }
-          return;
-        }
-
-        if (!isMountedRef.current) return;
-
-        setProgress(status.progress);
-        setDownloadSpeed(status.download_speed_mbps);
-
-        if (status.status === 'completed') {
-          setState('completed');
-          setProgress(100);
-          setPendingDelete(false); // 重置准备删除状态
-          setHasPartial(false); // 重置部分下载状态
-          if (statusIntervalRef.current) {
-            clearInterval(statusIntervalRef.current);
-            statusIntervalRef.current = null;
-          }
-        } else if (status.status === 'failed') {
-          setState('failed');
-          setError(status.error || '下载失败');
-          setPendingDelete(false); // 重置准备删除状态
-          // 失败时检查是否有部分下载
-          const partial = await hasPartialDownload(seriesKey, episodeIndex);
-          setHasPartial(partial);
-          if (statusIntervalRef.current) {
-            clearInterval(statusIntervalRef.current);
-            statusIntervalRef.current = null;
-          }
-        } else if (status.status === 'cancelled') {
-          setState('cancelled');
-          setPendingDelete(false); // 重置准备删除状态
-          // 取消时检查是否有部分下载
-          const partial = await hasPartialDownload(seriesKey, episodeIndex);
-          setHasPartial(partial);
-          if (statusIntervalRef.current) {
-            clearInterval(statusIntervalRef.current);
-            statusIntervalRef.current = null;
-          }
-        }
-      } catch (error) {
-        console.error('获取下载状态失败:', error);
-        // 继续轮询，不中断
-      }
-    }, 1000); // 每秒查询一次
   };
 
   const handleCancel = async () => {
@@ -384,7 +389,7 @@ export default function DownloadButton({
         statusIntervalRef.current = null;
       }
     } catch (error) {
-      console.error('取消下载失败:', error);
+      setError((error as Error).message || '取消下载失败');
     }
   };
 
@@ -410,7 +415,7 @@ export default function DownloadButton({
         setError(null);
         setTaskId(null);
         setHasPartial(false); // 重置部分下载状态
-        
+
         // 如果使用 Context，刷新状态；否则检查下载状态
         if (downloadStatusContext) {
           await downloadStatusContext.refresh();
@@ -418,7 +423,6 @@ export default function DownloadButton({
           await checkDownloaded();
         }
       } catch (error) {
-        console.error('删除下载失败:', error);
         setError((error as Error).message || '删除失败');
         // 删除失败后，保持当前状态
       }
@@ -460,7 +464,11 @@ export default function DownloadButton({
   const handleButtonClick = () => {
     if (state === 'downloading' || state === 'checking') {
       handleCancel();
-    } else if (state === 'completed' || state === 'cancelled' || state === 'failed') {
+    } else if (
+      state === 'completed' ||
+      state === 'cancelled' ||
+      state === 'failed'
+    ) {
       // 已完成、已取消或失败：第一次点击进入准备删除状态，第二次点击执行删除
       handleDeleteClick();
     } else {
@@ -472,16 +480,29 @@ export default function DownloadButton({
   // 确定显示的图标
   const getIcon = () => {
     if (state === 'checking') {
-      return <Loader2 className="animate-spin" size={iconSize} />;
+      return <Loader2 className='animate-spin' size={iconSize} />;
     } else if (state === 'downloading') {
       return <X size={iconSize} />;
-    } else if (state === 'completed' || state === 'cancelled' || state === 'failed') {
+    } else if (
+      state === 'completed' ||
+      state === 'cancelled' ||
+      state === 'failed'
+    ) {
       // 如果处于准备删除状态，显示删除图标，否则显示对应的状态图标
-      return pendingDelete ? <Trash2 size={iconSize} /> : 
-        (state === 'completed' ? <Check size={iconSize} /> : <X size={iconSize} />);
+      return pendingDelete ? (
+        <Trash2 size={iconSize} />
+      ) : state === 'completed' ? (
+        <Check size={iconSize} />
+      ) : (
+        <X size={iconSize} />
+      );
     } else {
       // 空闲状态：如果有部分下载，显示继续图标，否则显示下载图标
-      return hasPartial ? <Play size={iconSize} /> : <Download size={iconSize} />;
+      return hasPartial ? (
+        <Play size={iconSize} />
+      ) : (
+        <Download size={iconSize} />
+      );
     }
   };
 
@@ -543,14 +564,14 @@ export default function DownloadButton({
       {/* 下载进度条（仅在下载中显示） */}
       {state === 'downloading' && (
         <div
-          className="absolute -bottom-1 left-0 right-0 h-0.5 bg-yellow-500 rounded-full transition-all duration-300"
+          className='absolute -bottom-1 left-0 right-0 h-0.5 bg-yellow-500 rounded-full transition-all duration-300'
           style={{ width: `${progress * 100}%` }}
         />
       )}
 
       {/* 错误提示 */}
       {state === 'failed' && error && (
-        <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-red-500 text-white text-xs px-2 py-1 rounded whitespace-nowrap z-10">
+        <div className='absolute -top-8 left-1/2 -translate-x-1/2 bg-red-500 text-white text-xs px-2 py-1 rounded whitespace-nowrap z-10'>
           {error}
         </div>
       )}

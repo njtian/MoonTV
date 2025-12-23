@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+
 import { getVideoDownloadService } from '@/lib/video-download-service';
 
 export async function GET(request: Request) {
@@ -13,10 +14,7 @@ export async function GET(request: Request) {
       // 查询单个任务
       const status = await videoDownloadService.getDownloadStatus(taskId);
       if (!status) {
-        return NextResponse.json(
-          { error: '任务不存在' },
-          { status: 404 }
-        );
+        return NextResponse.json({ error: '任务不存在' }, { status: 404 });
       }
 
       return NextResponse.json({
@@ -37,7 +35,6 @@ export async function GET(request: Request) {
       });
     }
   } catch (error) {
-    console.error('获取下载状态失败:', error);
     return NextResponse.json(
       { error: (error as Error).message },
       { status: 500 }

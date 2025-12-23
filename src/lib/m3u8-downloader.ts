@@ -1,4 +1,5 @@
 import { promises as fs } from 'fs';
+import { debuglog } from 'node:util';
 import path from 'path';
 
 import {
@@ -6,16 +7,33 @@ import {
   isMasterPlaylist,
   parseMasterPlaylist,
   parseMediaPlaylist,
+  resolveUrl,
   selectBestStream,
 } from './m3u8-parser';
-import { resolveUrl } from './m3u8-parser';
 import { M3U8DownloadResult, M3U8Segment } from './video-cache.types';
 import { atomicWriteFile, ensureDirectory } from './video-cache-utils';
+
+const debug = debuglog('m3u8');
 
 /**
  * M3U8下载器类
  */
 export class M3U8Downloader {
+  /**
+   * 最大重试次数（默认10）
+   */
+  private readonly maxRetries: number;
+
+  /**
+   * 重试间隔（毫秒，默认5000）
+   */
+  private readonly retryDelay: number;
+
+  constructor(maxRetries = 10, retryDelay = 5000) {
+    this.maxRetries = maxRetries;
+    this.retryDelay = retryDelay;
+  }
+
   /**
    * 下载M3U8文件及其所有分段
    */
@@ -200,11 +218,10 @@ export class M3U8Downloader {
   }
 
   /**
-   * 下载单个分段
+   * 执行单次分段下载（不包含重试逻辑）
    */
-  private async downloadSegment(
+  private async fetchSegment(
     url: string,
-    taskId: string,
     abortSignal?: AbortSignal
   ): Promise<Buffer> {
     // 如果外部已取消，直接抛出错误
@@ -246,6 +263,70 @@ export class M3U8Downloader {
       }
       throw error;
     }
+  }
+
+  /**
+   * 下载单个分段（带重试机制）
+   */
+  private async downloadSegment(
+    url: string,
+    taskId: string,
+    abortSignal?: AbortSignal
+  ): Promise<Buffer> {
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+      // 检查是否已取消
+      if (abortSignal?.aborted) {
+        throw new Error('下载已取消');
+      }
+
+      try {
+        // 执行单次下载
+        return await this.fetchSegment(url, abortSignal);
+      } catch (error) {
+        lastError = error as Error;
+
+        // 如果是用户主动取消，不重试，直接抛出
+        if (abortSignal?.aborted || lastError.message === '下载已取消') {
+          throw lastError;
+        }
+
+        // 其他错误（网络错误、HTTP错误、超时等）都进行重试
+        if (attempt < this.maxRetries) {
+          debug(
+            `[下载任务 ${taskId}] 分段下载失败 (尝试 ${attempt + 1}/${
+              this.maxRetries + 1
+            }): ${url} - ${lastError.message}，${
+              this.retryDelay / 1000
+            }秒后重试...`
+          );
+        } else {
+          // 最后一次尝试失败
+          debug(
+            `[下载任务 ${taskId}] 分段下载最终失败 (已重试 ${this.maxRetries} 次): ${url} - ${lastError.message}`
+          );
+          throw lastError;
+        }
+
+        // 等待后重试（最后一次尝试失败时不会执行到这里）
+        if (attempt < this.maxRetries) {
+          // 在等待期间也要检查取消信号
+          const startTime = Date.now();
+          while (Date.now() - startTime < this.retryDelay) {
+            // 检查是否已取消
+            if (abortSignal?.aborted) {
+              throw new Error('下载已取消');
+            }
+            // 等待100ms后再次检查
+            await new Promise((resolve) => setTimeout(resolve, 100));
+          }
+        }
+      }
+    }
+
+    // 理论上不会执行到这里，但为了类型安全
+    throw lastError || new Error('下载分段失败');
   }
 
   /**

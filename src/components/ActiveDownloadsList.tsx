@@ -105,7 +105,7 @@ export default function ActiveDownloadsList({
     // 开始轮询
     pollingIntervalRef.current = setInterval(() => {
       loadActiveTasks();
-    }, 2000); // 每2秒更新一次
+    }, 5000); // 每5秒更新一次
 
     return () => {
       mountedRef.current = false;

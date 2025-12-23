@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+
 import { getVideoDownloadService } from '@/lib/video-download-service';
 
 export async function POST(request: Request) {
@@ -7,10 +8,7 @@ export async function POST(request: Request) {
     const { series_key, episode_index } = body;
 
     if (!series_key || episode_index === undefined) {
-      return NextResponse.json(
-        { error: '缺少必要参数' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: '缺少必要参数' }, { status: 400 });
     }
 
     const videoDownloadService = getVideoDownloadService();
@@ -34,7 +32,6 @@ export async function POST(request: Request) {
       freed_space_mb: result.freedSpaceMB,
     });
   } catch (error) {
-    console.error('删除下载文件失败:', error);
     return NextResponse.json(
       { error: (error as Error).message },
       { status: 500 }

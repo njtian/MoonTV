@@ -35,27 +35,21 @@ export async function notifyPlaybackSuccess(
   url: string,
   sourceName?: string
 ): Promise<void> {
-  try {
-    const response = await fetch('/api/cache/update-episode', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        series_key: seriesKey,
-        episode_index: episodeIndex,
-        source: source,
-        url: url,
-        source_name: sourceName,
-      }),
-    });
+  const response = await fetch('/api/cache/update-episode', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      series_key: seriesKey,
+      episode_index: episodeIndex,
+      source: source,
+      url: url,
+      source_name: sourceName,
+    }),
+  });
 
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: '未知错误' }));
-      throw new Error(error.error || '更新缓存失败');
-    }
-  } catch (error) {
-    // 静默失败，不影响播放
-    console.warn('缓存更新失败（不影响播放）:', error);
-    throw error;
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: '未知错误' }));
+    throw new Error(error.error || '更新缓存失败');
   }
 }
 
@@ -89,7 +83,9 @@ export async function getCacheStatus(filter?: {
     params.append('douban_id', filter.doubanId.toString());
   }
 
-  const url = `/api/cache/status${params.toString() ? `?${params.toString()}` : ''}`;
+  const url = `/api/cache/status${
+    params.toString() ? `?${params.toString()}` : ''
+  }`;
   const response = await fetch(url);
 
   if (!response.ok) {
@@ -161,9 +157,7 @@ export async function getCacheProgress(taskId: string): Promise<{
 /**
  * 开始下载视频文件
  */
-export async function startDownload(
-  options: DownloadOptions
-): Promise<{
+export async function startDownload(options: DownloadOptions): Promise<{
   success: boolean;
   task_id: string;
   message: string;
@@ -262,7 +256,9 @@ export function getDownloadedPlayUrl(
   // IMPORTANT: HLS playlists are aggressively cached by browsers when Cache-Control allows it.
   // We add a cache-busting query to ensure the latest rewritten playlist (absolute segment URLs)
   // is always fetched, otherwise old cached playlists can keep pointing to invalid relative paths.
-  return `/api/download/play?series_key=${encodeURIComponent(seriesKey)}&episode_index=${episodeIndex}&_cb=${Date.now()}`;
+  return `/api/download/play?series_key=${encodeURIComponent(
+    seriesKey
+  )}&episode_index=${episodeIndex}&_cb=${Date.now()}`;
 }
 
 /**
@@ -302,11 +298,8 @@ export async function isEpisodeDownloaded(
 ): Promise<boolean> {
   try {
     const list = await getDownloadedList(seriesKey);
-    return list.downloads.some(
-      (item) => item.episode_index === episodeIndex
-    );
+    return list.downloads.some((item) => item.episode_index === episodeIndex);
   } catch (error) {
-    console.warn('检查下载状态失败:', error);
     return false;
   }
 }
@@ -320,7 +313,9 @@ export async function hasPartialDownload(
 ): Promise<boolean> {
   try {
     const response = await fetch(
-      `/api/download/check-partial?series_key=${encodeURIComponent(seriesKey)}&episode_index=${episodeIndex}`
+      `/api/download/check-partial?series_key=${encodeURIComponent(
+        seriesKey
+      )}&episode_index=${episodeIndex}`
     );
 
     if (!response.ok) {
@@ -330,7 +325,6 @@ export async function hasPartialDownload(
     const data = await response.json();
     return data.has_partial_download || false;
   } catch (error) {
-    console.warn('检查部分下载状态失败:', error);
     return false;
   }
 }
@@ -352,15 +346,24 @@ export async function getAllActiveTasks(): Promise<{
   const data = await response.json();
   // 转换时间戳：API 返回 ISO 字符串，需要转换为时间戳（毫秒）
   return {
-    tasks: data.tasks.map((task: any) => ({
-      ...task,
-      started_at: typeof task.started_at === 'string' 
-        ? new Date(task.started_at).getTime() 
-        : task.started_at,
-      updated_at: typeof task.updated_at === 'string'
-        ? new Date(task.updated_at).getTime()
-        : task.updated_at,
-    })),
+    tasks: data.tasks.map(
+      (
+        task: DownloadStatus & {
+          started_at: string | number;
+          updated_at: string | number;
+        }
+      ) => ({
+        ...task,
+        started_at:
+          typeof task.started_at === 'string'
+            ? new Date(task.started_at).getTime()
+            : task.started_at,
+        updated_at:
+          typeof task.updated_at === 'string'
+            ? new Date(task.updated_at).getTime()
+            : task.updated_at,
+      })
+    ),
     total: data.total,
   };
 }

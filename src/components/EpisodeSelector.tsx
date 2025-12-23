@@ -11,6 +11,7 @@ import React, {
 
 import { SearchResult } from '@/lib/types';
 import { getVideoResolutionFromM3u8, processImageUrl } from '@/lib/utils';
+
 import DownloadButton from './DownloadButton';
 
 // 定义视频信息类型
@@ -417,7 +418,7 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
               return (
                 <div
                   key={episodeNumber}
-                  className="relative flex items-center justify-center"
+                  className='relative flex items-center justify-center'
                 >
                   <button
                     onClick={() => handleEpisodeClick(episodeNumber - 1)}
@@ -439,7 +440,7 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
                   </button>
                   {/* 下载按钮 */}
                   {seriesKey && (
-                    <div className="absolute -top-1 -right-1 z-10">
+                    <div className='absolute -top-1 -right-1 z-10'>
                       <DownloadButton
                         seriesKey={seriesKey}
                         episodeIndex={episodeNumber}
@@ -449,14 +450,14 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
                         episodeTitle={`第${episodeNumber}集`}
                         downloaded={isDownloaded}
                         autoCheck={false}
-                        size="sm"
-                        className="bg-white dark:bg-gray-800 rounded-full shadow-md"
+                        size='sm'
+                        className='bg-white dark:bg-gray-800 rounded-full shadow-md'
                       />
                     </div>
                   )}
                   {/* 已下载标识 */}
                   {isDownloaded && (
-                    <div className="absolute -bottom-0.5 -right-0.5 w-2 h-2 bg-green-500 rounded-full border border-white dark:border-gray-800" />
+                    <div className='absolute -bottom-0.5 -right-0.5 w-2 h-2 bg-green-500 rounded-full border border-white dark:border-gray-800' />
                   )}
                 </div>
               );

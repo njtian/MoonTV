@@ -5,7 +5,7 @@
   "author": "MoonTV Team",
   "private": true,
   "scripts": {
-    "dev": "pnpm gen:runtime && pnpm gen:manifest && next dev -H 0.0.0.0",
+    "dev": "pnpm gen:runtime && pnpm gen:manifest && next dev -H 0.0.0.0 -p 3003",
     "build": "pnpm gen:runtime && pnpm gen:manifest && next build",
     "start": "next start",
     "lint": "next lint",

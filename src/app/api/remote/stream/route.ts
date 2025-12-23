@@ -9,6 +9,10 @@ function sseEvent(data: string): string {
   return `data: ${data}\n\n`;
 }
 
+type StreamController = ReadableStreamDefaultController<Uint8Array> & {
+  _unsubscribe?: () => Promise<void>;
+};
+
 export async function GET(request: Request) {
   try {
     if (!isRemoteEnabled()) {
@@ -22,6 +26,7 @@ export async function GET(request: Request) {
 
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
+        const controllerWithCleanup = controller as StreamController;
         controller.enqueue(
           encoder.encode(sseEvent(JSON.stringify({ ready: true })))
         );
@@ -32,7 +37,7 @@ export async function GET(request: Request) {
           });
 
           // 当传输关闭时，取消订阅
-          (controller as any)._unsubscribe = unsubscribe;
+          controllerWithCleanup._unsubscribe = unsubscribe;
         } catch (err) {
           console.error('SSE subscribe error', err);
           controller.enqueue(
@@ -44,9 +49,8 @@ export async function GET(request: Request) {
       },
       async cancel() {
         try {
-          const fn = (this as any)._unsubscribe as
-            | (() => Promise<void>)
-            | undefined;
+          const controllerWithCleanup = this as StreamController;
+          const fn = controllerWithCleanup._unsubscribe;
           if (fn) await fn();
         } catch {
           // ignore

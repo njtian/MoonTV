@@ -2,6 +2,12 @@
 /* eslint-disable @typescript-eslint/no-var-requires */
 const nextConfig = {
   output: 'standalone',
+  // 排除 .cache 目录从 standalone 输出
+  experimental: {
+    outputFileTracingExcludes: {
+      '*': ['.cache/**/*'],
+    },
+  },
   eslint: {
     dirs: ['src'],
   },

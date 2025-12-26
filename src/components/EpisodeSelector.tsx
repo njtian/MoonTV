@@ -45,6 +45,12 @@ interface EpisodeSelectorProps {
   /** 下载相关 */
   seriesKey?: string;
   downloadedEpisodes?: Set<number>;
+  /** 下载状态变化回调 */
+  onDownloadChange?: (
+    seriesKey: string,
+    episodeIndex: number,
+    isDownloaded: boolean
+  ) => void;
 }
 
 /**
@@ -65,6 +71,7 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
   precomputedVideoInfo,
   seriesKey,
   downloadedEpisodes = new Set(),
+  onDownloadChange,
 }) => {
   const router = useRouter();
   const pageCount = Math.ceil(totalEpisodes / episodesPerPage);
@@ -452,6 +459,7 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
                         autoCheck={false}
                         size='sm'
                         className='bg-white dark:bg-gray-800 rounded-full shadow-md'
+                        onDownloadChange={onDownloadChange}
                       />
                     </div>
                   )}

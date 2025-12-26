@@ -35,6 +35,15 @@ interface DownloadButtonProps {
    * Parent can still keep UI correct via `downloaded` and user interactions.
    */
   autoCheck?: boolean;
+  /**
+   * Callback when download status changes (e.g., after delete or download completion).
+   * This allows parent components to refresh their downloadedEpisodes state.
+   */
+  onDownloadChange?: (
+    seriesKey: string,
+    episodeIndex: number,
+    isDownloaded: boolean
+  ) => void;
 }
 
 type DownloadState =
@@ -56,11 +65,17 @@ export default function DownloadButton({
   size = 'sm',
   downloaded,
   autoCheck = true,
+  onDownloadChange,
 }: DownloadButtonProps) {
   // 尝试使用 Context（如果可用，返回 null 如果不在 Provider 中）
   const downloadStatusContext = useDownloadStatusSafe();
 
   const [state, setState] = useState<DownloadState>('idle');
+
+  // 同步 state 到 ref，用于在 useEffect 中检查状态而不触发重新渲染
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [taskId, setTaskId] = useState<string | null>(null);
@@ -70,6 +85,8 @@ export default function DownloadButton({
   const statusIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const deleteTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isMountedRef = useRef(true);
+  const stateRef = useRef<DownloadState>(state);
+  const justDeletedRef = useRef(false); // 标记是否刚刚删除
 
   // 从 Context 获取任务状态
   const taskStatus = downloadStatusContext
@@ -100,11 +117,17 @@ export default function DownloadButton({
       setPendingDelete(false);
       setError(taskStatus.error || null);
     } else if (taskStatus.status === 'completed') {
+      const wasCompleted = stateRef.current === 'completed';
       setState('completed');
+      stateRef.current = 'completed'; // 立即更新 ref
       setProgress(100);
       setPendingDelete(false);
       setHasPartial(false);
       setError(null);
+      // 如果之前不是已完成状态，通知父组件
+      if (!wasCompleted) {
+        onDownloadChange?.(seriesKey, episodeIndex, true);
+      }
     } else if (taskStatus.status === 'cancelled') {
       setState('cancelled');
       setPendingDelete(false);
@@ -114,7 +137,14 @@ export default function DownloadButton({
       setError(taskStatus.error || '下载失败');
       setPendingDelete(false);
     }
-  }, [taskStatus, downloadStatusContext]);
+  }, [
+    taskStatus,
+    downloadStatusContext,
+    onDownloadChange,
+    seriesKey,
+    episodeIndex,
+    state,
+  ]);
 
   // 独立轮询逻辑（仅在未使用 Context 时使用）
   const startPolling = useCallback(
@@ -132,6 +162,35 @@ export default function DownloadButton({
         try {
           const status = await getDownloadStatus(tid);
           if (!status) {
+            // 任务不存在，可能是已完成并从活跃任务列表中移除
+            // 如果当前状态是 downloading，检查是否已下载
+            if (
+              (stateRef.current === 'downloading' ||
+                stateRef.current === 'checking') &&
+              isMountedRef.current
+            ) {
+              try {
+                const downloaded = await isEpisodeDownloaded(
+                  seriesKey,
+                  episodeIndex
+                );
+                if (downloaded) {
+                  setState('completed');
+                  stateRef.current = 'completed';
+                  setProgress(100);
+                  setPendingDelete(false);
+                  setHasPartial(false);
+                  onDownloadChange?.(seriesKey, episodeIndex, true);
+                  if (statusIntervalRef.current) {
+                    clearInterval(statusIntervalRef.current);
+                    statusIntervalRef.current = null;
+                  }
+                  return;
+                }
+              } catch {
+                // 检查失败，继续执行 onMissing
+              }
+            }
             if (onMissing) {
               await onMissing();
             }
@@ -148,6 +207,7 @@ export default function DownloadButton({
 
           if (status.status === 'completed') {
             setState('completed');
+            stateRef.current = 'completed'; // 立即更新 ref
             setProgress(100);
             setPendingDelete(false); // 重置准备删除状态
             setHasPartial(false); // 重置部分下载状态
@@ -155,6 +215,8 @@ export default function DownloadButton({
               clearInterval(statusIntervalRef.current);
               statusIntervalRef.current = null;
             }
+            // 通知父组件下载已完成
+            onDownloadChange?.(seriesKey, episodeIndex, true);
           } else if (status.status === 'failed') {
             setState('failed');
             setError(status.error || '下载失败');
@@ -183,7 +245,7 @@ export default function DownloadButton({
         }
       }, 5000); // 每5秒查询一次
     },
-    [downloadStatusContext, episodeIndex, seriesKey]
+    [downloadStatusContext, episodeIndex, seriesKey, onDownloadChange]
   );
 
   const checkDownloaded = useCallback(async () => {
@@ -223,10 +285,21 @@ export default function DownloadButton({
       // 检查是否已下载
       const downloaded = await isEpisodeDownloaded(seriesKey, episodeIndex);
       if (downloaded && isMountedRef.current) {
+        const wasCompleted = state === 'completed';
         setState('completed');
         setPendingDelete(false); // 重置准备删除状态
         setHasPartial(false);
+        // 如果之前不是已完成状态，通知父组件
+        if (!wasCompleted) {
+          onDownloadChange?.(seriesKey, episodeIndex, true);
+        }
       } else if (isMountedRef.current) {
+        // 如果当前状态已经是 completed，不应该重置为 idle
+        // 这可能是因为文件检查有延迟，或者文件正在写入中
+        if (state === 'completed') {
+          // 保持 completed 状态，不重置
+          return;
+        }
         // 检查是否有部分下载的文件
         const partial = await hasPartialDownload(seriesKey, episodeIndex);
         if (isMountedRef.current) {
@@ -242,7 +315,14 @@ export default function DownloadButton({
         setHasPartial(false);
       }
     }
-  }, [downloadStatusContext, episodeIndex, seriesKey, startPolling]);
+  }, [
+    downloadStatusContext,
+    episodeIndex,
+    seriesKey,
+    startPolling,
+    onDownloadChange,
+    state,
+  ]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -250,22 +330,46 @@ export default function DownloadButton({
       // Avoid any network calls on mount (e.g. in episode grids with many buttons).
       // 但如果 Context 中有任务状态，上面的 useEffect 会处理
       if (downloaded) {
-        setState('completed');
-        setPendingDelete(false);
-        setHasPartial(false);
+        // 如果 downloaded prop 为 true，设置为 completed
+        // 但如果刚刚删除（justDeletedRef），不应该重置为 completed
+        // 这可能是 downloaded prop 更新延迟导致的
+        if (!justDeletedRef.current) {
+          // 如果当前状态不是 completed，设置为 completed
+          // 包括从 downloading 转换到 completed 的情况
+          if (stateRef.current !== 'completed') {
+            setState('completed');
+            stateRef.current = 'completed'; // 立即更新 ref
+            setPendingDelete(false);
+            setHasPartial(false);
+          }
+        }
       } else if (!downloadStatusContext || !taskStatus) {
         // 只有在没有 Context 或 Context 中没有任务状态时才设置为 idle
-        setState('idle');
-        setPendingDelete(false);
+        // 但如果当前状态已经是 completed 且不是刚删除，不应该重置（可能是 downloaded prop 更新延迟）
+        if (stateRef.current !== 'completed' || justDeletedRef.current) {
+          setState('idle');
+          setPendingDelete(false);
+        }
       }
     } else if (downloaded) {
       // Parent already knows it's downloaded; avoid per-button list fetch.
-      setState('completed');
-      setPendingDelete(false);
-      setHasPartial(false);
+      // 但如果刚刚删除，不应该重置为 completed
+      if (!justDeletedRef.current) {
+        // 如果当前状态不是 completed，设置为 completed
+        // 包括从 downloading 转换到 completed 的情况
+        if (stateRef.current !== 'completed') {
+          setState('completed');
+          stateRef.current = 'completed'; // 立即更新 ref
+          setPendingDelete(false);
+          setHasPartial(false);
+        }
+      }
     } else {
       // 检查是否已下载
-      checkDownloaded();
+      // 但如果当前状态已经是 completed，不应该重新检查（避免状态被重置）
+      if (stateRef.current !== 'completed') {
+        checkDownloaded();
+      }
     }
     return () => {
       isMountedRef.current = false;
@@ -410,7 +514,10 @@ export default function DownloadButton({
       // 执行删除
       try {
         await deleteDownload(seriesKey, episodeIndex);
+        // 立即更新状态和 ref，防止 useEffect 错误重置
         setState('idle');
+        stateRef.current = 'idle'; // 立即更新 ref
+        justDeletedRef.current = true; // 标记刚刚删除
         setProgress(0);
         setError(null);
         setTaskId(null);
@@ -422,6 +529,14 @@ export default function DownloadButton({
         } else {
           await checkDownloaded();
         }
+
+        // 通知父组件下载状态已改变（已删除）
+        onDownloadChange?.(seriesKey, episodeIndex, false);
+
+        // 延迟重置删除标记，给父组件时间更新 downloaded prop
+        setTimeout(() => {
+          justDeletedRef.current = false;
+        }, 1000);
       } catch (error) {
         setError((error as Error).message || '删除失败');
         // 删除失败后，保持当前状态
@@ -541,6 +656,28 @@ export default function DownloadButton({
     }
   };
 
+  // 计算环形进度条的参数
+  const getCircularProgress = () => {
+    if (state !== 'downloading') return null;
+
+    // 根据按钮大小计算合适的半径
+    const buttonSize = size === 'sm' ? 24 : size === 'md' ? 32 : 40;
+    const radius = buttonSize / 2 - 3; // 留出一些边距
+    const circumference = 2 * Math.PI * radius;
+    const offset = circumference * (1 - progress);
+    const center = buttonSize / 2;
+
+    return {
+      radius,
+      circumference,
+      offset,
+      size: buttonSize,
+      center,
+    };
+  };
+
+  const circularProgress = getCircularProgress();
+
   return (
     <div className={`relative inline-flex items-center ${className}`}>
       <button
@@ -555,19 +692,55 @@ export default function DownloadButton({
           ${getButtonClassName()}
           disabled:opacity-50
           disabled:cursor-not-allowed
+          relative
         `}
         title={getButtonTitle()}
       >
         {getIcon()}
-      </button>
 
-      {/* 下载进度条（仅在下载中显示） */}
-      {state === 'downloading' && (
-        <div
-          className='absolute -bottom-1 left-0 right-0 h-0.5 bg-yellow-500 rounded-full transition-all duration-300'
-          style={{ width: `${progress * 100}%` }}
-        />
-      )}
+        {/* 环形进度条（仅在下载中显示） */}
+        {circularProgress && (
+          <svg
+            className='absolute inset-0 w-full h-full pointer-events-none'
+            style={{
+              width: circularProgress.size,
+              height: circularProgress.size,
+            }}
+            viewBox={`0 0 ${circularProgress.size} ${circularProgress.size}`}
+          >
+            <g
+              transform={`translate(${circularProgress.center}, ${circularProgress.center}) rotate(-90)`}
+            >
+              {/* 背景圆环 */}
+              <circle
+                cx='0'
+                cy='0'
+                r={circularProgress.radius}
+                fill='none'
+                stroke='currentColor'
+                strokeWidth='2'
+                className='opacity-20 text-yellow-500'
+              />
+              {/* 进度圆环 - 从顶部开始，顺时针 */}
+              <circle
+                cx='0'
+                cy='0'
+                r={circularProgress.radius}
+                fill='none'
+                stroke='currentColor'
+                strokeWidth='2'
+                strokeLinecap='round'
+                strokeDasharray={circularProgress.circumference}
+                strokeDashoffset={circularProgress.offset}
+                className='text-yellow-500'
+                style={{
+                  transition: 'stroke-dashoffset 0.3s ease',
+                }}
+              />
+            </g>
+          </svg>
+        )}
+      </button>
 
       {/* 错误提示 */}
       {state === 'failed' && error && (

@@ -6,6 +6,11 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const taskId = searchParams.get('task_id');
+    const recentCompletedMsParam = searchParams.get('recent_completed_ms');
+    const recentCompletedMs =
+      recentCompletedMsParam !== null && recentCompletedMsParam !== ''
+        ? Math.max(0, parseInt(recentCompletedMsParam, 10) || 0)
+        : 5 * 60 * 1000;
 
     const videoDownloadService = getVideoDownloadService();
     await videoDownloadService.initialize();
@@ -23,15 +28,23 @@ export async function GET(request: Request) {
         updated_at: new Date(status.updated_at).toISOString(),
       });
     } else {
-      // 返回所有活跃任务
-      const activeTasks = await videoDownloadService.getAllActiveTasks();
+      // 返回所有活跃任务 + 最近完成任务（默认 5 分钟窗口）
+      const snapshot = await videoDownloadService.getTasksSnapshot(
+        recentCompletedMs
+      );
       return NextResponse.json({
-        tasks: activeTasks.map((task) => ({
+        tasks: snapshot.active.map((task) => ({
           ...task,
           started_at: new Date(task.started_at).toISOString(),
           updated_at: new Date(task.updated_at).toISOString(),
         })),
-        total: activeTasks.length,
+        recent_completed: snapshot.recent_completed.map((task) => ({
+          ...task,
+          started_at: new Date(task.started_at).toISOString(),
+          updated_at: new Date(task.updated_at).toISOString(),
+        })),
+        total: snapshot.active.length,
+        total_recent_completed: snapshot.recent_completed.length,
       });
     }
   } catch (error) {

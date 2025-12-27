@@ -592,21 +592,25 @@ function PlayPageClient() {
 
   // 处理下载状态变化（删除或下载完成时调用）
   const handleDownloadChange = useCallback(
-    (sk: string, episodeIndex: number, isDownloaded: boolean) => {
+    async (sk: string, episodeIndex: number, isDownloaded: boolean) => {
       // 只处理当前系列的下载状态变化
       if (sk !== seriesKey) return;
 
-      setDownloadedEpisodes((prev) => {
-        const updated = new Set(prev);
-        if (isDownloaded) {
-          updated.add(episodeIndex);
-        } else {
+      // 如果检测到下载完成，重新从服务器获取完整的下载列表，确保数据准确
+      if (isDownloaded) {
+        // 关键：给后端落盘/索引更新一个缓冲时间（不重试）
+        await new Promise<void>((resolve) => setTimeout(resolve, 800));
+        await loadDownloadedEpisodes(sk);
+      } else {
+        // 删除时，只更新本地状态即可
+        setDownloadedEpisodes((prev) => {
+          const updated = new Set(prev);
           updated.delete(episodeIndex);
-        }
-        return updated;
-      });
+          return updated;
+        });
+      }
     },
-    [seriesKey]
+    [seriesKey, loadDownloadedEpisodes]
   );
 
   // 统一由 seriesKey 变化触发一次下载列表刷新，避免多处重复调用
@@ -2833,7 +2837,7 @@ function PlayPageClient() {
     <PageLayout activePath='/play'>
       <DownloadStatusProvider
         seriesKey={seriesKey || undefined}
-        pollInterval={2000}
+        pollInterval={5000}
       >
         <div className='flex flex-col gap-3 py-4 px-5 lg:px-[3rem] 2xl:px-20'>
           {/* 第一行：影片标题 */}

@@ -433,8 +433,6 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
                       ${
                         isActive
                           ? 'bg-green-500 text-white shadow-lg shadow-green-500/25 dark:bg-green-600'
-                          : isDownloaded
-                          ? 'bg-blue-200 text-blue-700 hover:bg-blue-300 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50'
                           : 'bg-gray-200 text-gray-700 hover:bg-gray-300 hover:scale-105 dark:bg-white/10 dark:text-gray-300 dark:hover:bg-white/20'
                       }`.trim()}
                     title={
@@ -447,7 +445,10 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
                   </button>
                   {/* 下载按钮 */}
                   {seriesKey && (
-                    <div className='absolute -top-1 -right-1 z-10'>
+                    <div
+                      className='absolute -top-1 -right-1 z-50'
+                      style={{ pointerEvents: 'auto' }}
+                    >
                       <DownloadButton
                         seriesKey={seriesKey}
                         episodeIndex={episodeNumber}
@@ -458,14 +459,10 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
                         downloaded={isDownloaded}
                         autoCheck={false}
                         size='sm'
-                        className='bg-white dark:bg-gray-800 rounded-full shadow-md'
+                        className='bg-white/40 dark:bg-gray-800/40 backdrop-blur-sm rounded-full shadow-sm'
                         onDownloadChange={onDownloadChange}
                       />
                     </div>
-                  )}
-                  {/* 已下载标识 */}
-                  {isDownloaded && (
-                    <div className='absolute -bottom-0.5 -right-0.5 w-2 h-2 bg-green-500 rounded-full border border-white dark:border-gray-800' />
                   )}
                 </div>
               );

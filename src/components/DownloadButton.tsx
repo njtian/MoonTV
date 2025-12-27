@@ -52,7 +52,8 @@ type DownloadState =
   | 'downloading'
   | 'completed'
   | 'failed'
-  | 'cancelled';
+  | 'cancelled'
+  | 'deleting';
 
 export default function DownloadButton({
   seriesKey,
@@ -82,16 +83,40 @@ export default function DownloadButton({
   const [pendingDelete, setPendingDelete] = useState(false); // 是否处于准备删除状态
   const [hasPartial, setHasPartial] = useState(false); // 是否有部分下载
 
-  const statusIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const deleteTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const deleteOperationTimeoutRef = useRef<NodeJS.Timeout | null>(null); // 删除操作超时处理
+  const completionCheckTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isMountedRef = useRef(true);
   const stateRef = useRef<DownloadState>(state);
   const justDeletedRef = useRef(false); // 标记是否刚刚删除
+  const previousStateBeforeDeleteRef = useRef<DownloadState | null>(null); // 记录删除前的状态（失败时恢复）
+  const previousTaskStatusRef = useRef<string | null>(null); // 跟踪之前的任务状态
+  const lastTaskIdRef = useRef<string | null>(null); // 记录最近一次看到的 taskId（用于任务从活跃列表消失后的兜底）
 
   // 从 Context 获取任务状态
   const taskStatus = downloadStatusContext
     ? downloadStatusContext.getTaskStatus(seriesKey, episodeIndex)
     : null;
+
+  // 仅在卸载时清理定时器（不要在依赖变化时清理，否则会导致"3秒确认删除"无法自动恢复）
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      if (deleteTimeoutRef.current) {
+        clearTimeout(deleteTimeoutRef.current);
+        deleteTimeoutRef.current = null;
+      }
+      if (deleteOperationTimeoutRef.current) {
+        clearTimeout(deleteOperationTimeoutRef.current);
+        deleteOperationTimeoutRef.current = null;
+      }
+      if (completionCheckTimeoutRef.current) {
+        clearTimeout(completionCheckTimeoutRef.current);
+        completionCheckTimeoutRef.current = null;
+      }
+    };
+  }, []);
 
   // 监听 Context 中的任务状态变化
   useEffect(() => {
@@ -99,9 +124,104 @@ export default function DownloadButton({
       return;
     }
 
+    // 获取当前任务状态标识（用于检测状态变化）
+    const currentTaskStatusKey = taskStatus
+      ? `${taskStatus.task_id}_${taskStatus.status}`
+      : null;
+
+    // 检测任务状态变化：从 downloading 变为 undefined（任务完成并从列表移除）
+    const wasDownloading =
+      previousTaskStatusRef.current &&
+      previousTaskStatusRef.current.includes('downloading');
+
     if (!taskStatus) {
-      // 如果 Context 中没有任务状态，但当前状态是下载中，可能需要重置
-      // 不过为了避免覆盖其他状态，这里不做处理
+      // 如果 Context 中没有任务状态，但之前是下载中，检查是否已下载
+      // 这可能是任务已完成并从活跃任务列表中移除
+      if (
+        (stateRef.current === 'downloading' ||
+          stateRef.current === 'checking' ||
+          wasDownloading) &&
+        isMountedRef.current
+      ) {
+        // 关键：加一个固定延迟（不重试），避免“任务已完成但文件/列表尚未可见”的竞态
+        if (completionCheckTimeoutRef.current) {
+          clearTimeout(completionCheckTimeoutRef.current);
+          completionCheckTimeoutRef.current = null;
+        }
+        completionCheckTimeoutRef.current = setTimeout(() => {
+          const finalizeToCompleted = () => {
+            const wasCompleted = stateRef.current === 'completed';
+            setState('completed');
+            stateRef.current = 'completed';
+            setProgress(100);
+            setPendingDelete(false);
+            setHasPartial(false);
+            setError(null);
+            setTaskId(null);
+            if (!wasCompleted) {
+              onDownloadChange?.(seriesKey, episodeIndex, true);
+            }
+          };
+
+          const finalizeToIdle = () => {
+            if (isMountedRef.current && stateRef.current !== 'completed') {
+              setState('idle');
+              setPendingDelete(false);
+            }
+          };
+
+          const tid = lastTaskIdRef.current;
+
+          // 优先：用任务状态接口做一次最终态确认（不轮询/不重试）
+          const checkByTaskStatus = tid
+            ? getDownloadStatus(tid)
+                .then((status) => {
+                  if (!isMountedRef.current) return;
+                  if (status?.status === 'completed') {
+                    finalizeToCompleted();
+                    return true;
+                  }
+                  if (status?.status === 'failed') {
+                    setState('failed');
+                    setError(status.error || '下载失败');
+                    setPendingDelete(false);
+                    return true;
+                  }
+                  if (status?.status === 'cancelled') {
+                    setState('cancelled');
+                    setPendingDelete(false);
+                    setError(null);
+                    return true;
+                  }
+                  return false;
+                })
+                .catch(() => false)
+            : Promise.resolve(false);
+
+          checkByTaskStatus
+            .then((handled) => {
+              if (handled) return;
+              // 兜底：检查下载列表是否已可见（同样只做一次）
+              return isEpisodeDownloaded(seriesKey, episodeIndex)
+                .then((downloaded) => {
+                  if (!isMountedRef.current) return;
+                  if (downloaded) {
+                    finalizeToCompleted();
+                  } else {
+                    finalizeToIdle();
+                  }
+                })
+                .catch(() => {
+                  // 检查失败，保持当前状态
+                });
+            })
+            .finally(() => {
+              completionCheckTimeoutRef.current = null;
+            });
+        }, 800);
+      }
+      // 更新之前的任务状态引用
+      previousTaskStatusRef.current = currentTaskStatusKey;
       return;
     }
 
@@ -110,6 +230,7 @@ export default function DownloadButton({
       taskStatus.status === 'pending' ||
       taskStatus.status === 'downloading'
     ) {
+      lastTaskIdRef.current = taskStatus.task_id;
       setTaskId(taskStatus.task_id);
       setState('downloading');
       setProgress(taskStatus.progress);
@@ -117,6 +238,11 @@ export default function DownloadButton({
       setPendingDelete(false);
       setError(taskStatus.error || null);
     } else if (taskStatus.status === 'completed') {
+      // 如果正在删除中，不要覆盖状态
+      if (stateRef.current === 'deleting') {
+        return;
+      }
+      // 任务完成，立即更新状态并触发重新渲染
       const wasCompleted = stateRef.current === 'completed';
       setState('completed');
       stateRef.current = 'completed'; // 立即更新 ref
@@ -129,14 +255,25 @@ export default function DownloadButton({
         onDownloadChange?.(seriesKey, episodeIndex, true);
       }
     } else if (taskStatus.status === 'cancelled') {
+      // 如果正在删除中，不要覆盖状态
+      if (stateRef.current === 'deleting') {
+        return;
+      }
       setState('cancelled');
       setPendingDelete(false);
       setError(null);
     } else if (taskStatus.status === 'failed') {
+      // 如果正在删除中，不要覆盖状态
+      if (stateRef.current === 'deleting') {
+        return;
+      }
       setState('failed');
       setError(taskStatus.error || '下载失败');
       setPendingDelete(false);
     }
+
+    // 更新之前的任务状态引用
+    previousTaskStatusRef.current = currentTaskStatusKey;
   }, [
     taskStatus,
     downloadStatusContext,
@@ -146,111 +283,16 @@ export default function DownloadButton({
     state,
   ]);
 
-  // 独立轮询逻辑（仅在未使用 Context 时使用）
-  const startPolling = useCallback(
-    (tid: string, onMissing?: () => Promise<void>) => {
-      // 如果使用 Context，不需要独立轮询
+  const checkDownloaded = useCallback(async () => {
+    try {
+      // 如果使用 Context，刷新状态以获取最新任务信息
       if (downloadStatusContext) {
+        await downloadStatusContext.refresh();
+        // Context 的 useEffect 会处理状态更新
         return;
       }
 
-      if (statusIntervalRef.current) {
-        clearInterval(statusIntervalRef.current);
-      }
-
-      statusIntervalRef.current = setInterval(async () => {
-        try {
-          const status = await getDownloadStatus(tid);
-          if (!status) {
-            // 任务不存在，可能是已完成并从活跃任务列表中移除
-            // 如果当前状态是 downloading，检查是否已下载
-            if (
-              (stateRef.current === 'downloading' ||
-                stateRef.current === 'checking') &&
-              isMountedRef.current
-            ) {
-              try {
-                const downloaded = await isEpisodeDownloaded(
-                  seriesKey,
-                  episodeIndex
-                );
-                if (downloaded) {
-                  setState('completed');
-                  stateRef.current = 'completed';
-                  setProgress(100);
-                  setPendingDelete(false);
-                  setHasPartial(false);
-                  onDownloadChange?.(seriesKey, episodeIndex, true);
-                  if (statusIntervalRef.current) {
-                    clearInterval(statusIntervalRef.current);
-                    statusIntervalRef.current = null;
-                  }
-                  return;
-                }
-              } catch {
-                // 检查失败，继续执行 onMissing
-              }
-            }
-            if (onMissing) {
-              await onMissing();
-            }
-            if (statusIntervalRef.current) {
-              clearInterval(statusIntervalRef.current);
-              statusIntervalRef.current = null;
-            }
-            return;
-          }
-
-          if (!isMountedRef.current) return;
-
-          setProgress(status.progress);
-
-          if (status.status === 'completed') {
-            setState('completed');
-            stateRef.current = 'completed'; // 立即更新 ref
-            setProgress(100);
-            setPendingDelete(false); // 重置准备删除状态
-            setHasPartial(false); // 重置部分下载状态
-            if (statusIntervalRef.current) {
-              clearInterval(statusIntervalRef.current);
-              statusIntervalRef.current = null;
-            }
-            // 通知父组件下载已完成
-            onDownloadChange?.(seriesKey, episodeIndex, true);
-          } else if (status.status === 'failed') {
-            setState('failed');
-            setError(status.error || '下载失败');
-            setPendingDelete(false); // 重置准备删除状态
-            // 失败时检查是否有部分下载
-            const partial = await hasPartialDownload(seriesKey, episodeIndex);
-            setHasPartial(partial);
-            if (statusIntervalRef.current) {
-              clearInterval(statusIntervalRef.current);
-              statusIntervalRef.current = null;
-            }
-          } else if (status.status === 'cancelled') {
-            setState('cancelled');
-            setPendingDelete(false); // 重置准备删除状态
-            // 取消时检查是否有部分下载
-            const partial = await hasPartialDownload(seriesKey, episodeIndex);
-            setHasPartial(partial);
-            if (statusIntervalRef.current) {
-              clearInterval(statusIntervalRef.current);
-              statusIntervalRef.current = null;
-            }
-          }
-        } catch (error) {
-          // 继续轮询，不中断
-          setError((error as Error).message || '获取下载状态失败');
-        }
-      }, 5000); // 每5秒查询一次
-    },
-    [downloadStatusContext, episodeIndex, seriesKey, onDownloadChange]
-  );
-
-  const checkDownloaded = useCallback(async () => {
-    try {
-      // 首先检查是否有正在进行的下载任务
+      // 如果没有 Context，检查是否有正在进行的下载任务
       try {
         const activeTasks = await getAllActiveTasks();
         const activeTask = activeTasks.tasks.find(
@@ -263,19 +305,10 @@ export default function DownloadButton({
         if (activeTask && isMountedRef.current) {
           // 找到正在进行的任务，恢复下载状态
           setTaskId(activeTask.task_id);
-          setState(
-            activeTask.status === 'pending' ? 'downloading' : 'downloading'
-          );
+          setState('downloading');
           setProgress(activeTask.progress);
           setHasPartial(false);
           setPendingDelete(false);
-
-          // 如果使用 Context，刷新状态；否则启动独立轮询
-          if (downloadStatusContext) {
-            await downloadStatusContext.refresh();
-          } else {
-            startPolling(activeTask.task_id, checkDownloaded);
-          }
           return;
         }
       } catch {
@@ -315,17 +348,9 @@ export default function DownloadButton({
         setHasPartial(false);
       }
     }
-  }, [
-    downloadStatusContext,
-    episodeIndex,
-    seriesKey,
-    startPolling,
-    onDownloadChange,
-    state,
-  ]);
+  }, [downloadStatusContext, episodeIndex, seriesKey, onDownloadChange, state]);
 
   useEffect(() => {
-    isMountedRef.current = true;
     if (!autoCheck) {
       // Avoid any network calls on mount (e.g. in episode grids with many buttons).
       // 但如果 Context 中有任务状态，上面的 useEffect 会处理
@@ -371,17 +396,6 @@ export default function DownloadButton({
         checkDownloaded();
       }
     }
-    return () => {
-      isMountedRef.current = false;
-      if (statusIntervalRef.current) {
-        clearInterval(statusIntervalRef.current);
-        statusIntervalRef.current = null;
-      }
-      if (deleteTimeoutRef.current) {
-        clearTimeout(deleteTimeoutRef.current);
-        deleteTimeoutRef.current = null;
-      }
-    };
   }, [
     seriesKey,
     episodeIndex,
@@ -434,11 +448,9 @@ export default function DownloadButton({
       setState('downloading');
       setHasPartial(false); // 开始下载后重置部分下载状态
 
-      // 如果使用 Context，刷新状态；否则启动独立轮询
+      // 使用 Context 刷新状态
       if (downloadStatusContext) {
         await downloadStatusContext.refresh();
-      } else {
-        startPolling(result.task_id, checkDownloaded);
       }
     } catch (error) {
       const errorMessage = (error as Error).message || '下载失败';
@@ -465,7 +477,10 @@ export default function DownloadButton({
             setProgress(activeTask.progress);
             setError(null);
             setHasPartial(false);
-            startPolling(activeTask.task_id, checkDownloaded);
+            // 使用 Context 刷新状态
+            if (downloadStatusContext) {
+              await downloadStatusContext.refresh();
+            }
             return;
           }
         } catch (recoveryError) {
@@ -488,9 +503,9 @@ export default function DownloadButton({
       // 取消后检查是否有部分下载
       const partial = await hasPartialDownload(seriesKey, episodeIndex);
       setHasPartial(partial);
-      if (statusIntervalRef.current) {
-        clearInterval(statusIntervalRef.current);
-        statusIntervalRef.current = null;
+      // 使用 Context 刷新状态
+      if (downloadStatusContext) {
+        await downloadStatusContext.refresh();
       }
     } catch (error) {
       setError((error as Error).message || '取消下载失败');
@@ -498,30 +513,66 @@ export default function DownloadButton({
   };
 
   const handleDeleteClick = async () => {
-    if (state === 'downloading' || state === 'checking') {
-      return; // 下载中不能删除
+    if (
+      state === 'downloading' ||
+      state === 'checking' ||
+      state === 'deleting'
+    ) {
+      return; // 下载中或删除中不能删除
     }
 
     // 如果已经在准备删除状态，执行删除
     if (pendingDelete) {
-      // 清除定时器
+      // 清除3秒自动恢复定时器
       if (deleteTimeoutRef.current) {
         clearTimeout(deleteTimeoutRef.current);
         deleteTimeoutRef.current = null;
       }
       setPendingDelete(false);
 
+      // 记录删除前的状态（用于失败时恢复）
+      previousStateBeforeDeleteRef.current = stateRef.current;
+
+      // 立即切换到删除中状态
+      setState('deleting');
+      stateRef.current = 'deleting';
+      setError(null);
+
+      // 设置10秒超时保护
+      deleteOperationTimeoutRef.current = setTimeout(() => {
+        if (isMountedRef.current && stateRef.current === 'deleting') {
+          const previousState =
+            previousStateBeforeDeleteRef.current || 'completed';
+          setState(previousState);
+          stateRef.current = previousState;
+          setError('删除超时，请重试');
+          deleteOperationTimeoutRef.current = null;
+        }
+      }, 10000);
+
       // 执行删除
       try {
         await deleteDownload(seriesKey, episodeIndex);
-        // 立即更新状态和 ref，防止 useEffect 错误重置
+
+        // 清除超时定时器
+        if (deleteOperationTimeoutRef.current) {
+          clearTimeout(deleteOperationTimeoutRef.current);
+          deleteOperationTimeoutRef.current = null;
+        }
+
+        if (!isMountedRef.current) return;
+
+        // 删除成功：切换到 idle 状态
         setState('idle');
-        stateRef.current = 'idle'; // 立即更新 ref
-        justDeletedRef.current = true; // 标记刚刚删除
+        stateRef.current = 'idle';
+        // 标记“刚刚删除”，用于避免 downloaded prop 的滞后把状态又推回 completed
+        // 以及允许 autoCheck=false 分支在 downloaded=false 时将 completed 正确复位为 idle
+        justDeletedRef.current = true;
         setProgress(0);
         setError(null);
         setTaskId(null);
-        setHasPartial(false); // 重置部分下载状态
+        setHasPartial(false);
+        previousStateBeforeDeleteRef.current = null;
 
         // 如果使用 Context，刷新状态；否则检查下载状态
         if (downloadStatusContext) {
@@ -538,8 +589,21 @@ export default function DownloadButton({
           justDeletedRef.current = false;
         }, 1000);
       } catch (error) {
+        // 清除超时定时器
+        if (deleteOperationTimeoutRef.current) {
+          clearTimeout(deleteOperationTimeoutRef.current);
+          deleteOperationTimeoutRef.current = null;
+        }
+
+        if (!isMountedRef.current) return;
+
+        // 删除失败：恢复到删除前的状态
+        const previousState =
+          previousStateBeforeDeleteRef.current || 'completed';
+        setState(previousState);
+        stateRef.current = previousState;
         setError((error as Error).message || '删除失败');
-        // 删除失败后，保持当前状态
+        previousStateBeforeDeleteRef.current = null;
       }
     } else {
       // 第一次点击，进入准备删除状态
@@ -550,11 +614,15 @@ export default function DownloadButton({
         clearTimeout(deleteTimeoutRef.current);
       }
 
-      // 3秒后自动恢复
+      // 3秒后自动恢复到原始状态（如果状态是 completed，恢复显示绿色对勾）
       deleteTimeoutRef.current = setTimeout(() => {
         if (isMountedRef.current) {
           setPendingDelete(false);
           deleteTimeoutRef.current = null;
+          // 确保如果状态是 completed，保持 completed 状态（显示绿色对勾）
+          if (stateRef.current === 'completed') {
+            setState('completed');
+          }
         }
       }, 3000);
     }
@@ -577,7 +645,9 @@ export default function DownloadButton({
 
   // 确定按钮的点击处理函数
   const handleButtonClick = () => {
-    if (state === 'downloading' || state === 'checking') {
+    if (state === 'deleting') {
+      return; // 删除中状态禁用点击
+    } else if (state === 'downloading' || state === 'checking') {
       handleCancel();
     } else if (
       state === 'completed' ||
@@ -594,7 +664,7 @@ export default function DownloadButton({
 
   // 确定显示的图标
   const getIcon = () => {
-    if (state === 'checking') {
+    if (state === 'checking' || state === 'deleting') {
       return <Loader2 className='animate-spin' size={iconSize} />;
     } else if (state === 'downloading') {
       return <X size={iconSize} />;
@@ -624,15 +694,17 @@ export default function DownloadButton({
   // 确定按钮的样式
   const getButtonClassName = () => {
     if (pendingDelete) {
-      return `bg-red-500/20 text-red-500 hover:bg-red-500/30`;
+      return `bg-red-500/8 text-red-500 hover:bg-red-500/15`;
+    } else if (state === 'deleting') {
+      return `bg-orange-500/8 text-orange-500`;
     } else if (state === 'completed') {
-      return `bg-green-500/20 text-green-500 hover:bg-green-500/30`;
+      return `bg-green-500/8 text-green-500 hover:bg-green-500/15`;
     } else if (state === 'downloading' || state === 'checking') {
-      return `bg-yellow-500/20 text-yellow-500 hover:bg-yellow-500/30`;
+      return `bg-yellow-500/8 text-yellow-500 hover:bg-yellow-500/15`;
     } else if (state === 'failed' || state === 'cancelled') {
-      return `bg-red-500/20 text-red-500 hover:bg-red-500/30`;
+      return `bg-red-500/8 text-red-500 hover:bg-red-500/15`;
     } else {
-      return `bg-gray-500/20 text-gray-400 hover:bg-gray-500/30 hover:text-gray-300`;
+      return `bg-transparent text-gray-400 hover:bg-gray-500/10 hover:text-gray-300`;
     }
   };
 
@@ -640,6 +712,8 @@ export default function DownloadButton({
   const getButtonTitle = () => {
     if (pendingDelete) {
       return '再次点击确认删除';
+    } else if (state === 'deleting') {
+      return '删除中...';
     } else if (state === 'completed') {
       return '已下载（点击删除）';
     } else if (state === 'downloading') {

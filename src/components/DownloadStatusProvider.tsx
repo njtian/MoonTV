@@ -72,6 +72,10 @@ export default function DownloadStatusProvider({
   const [tasksMap, setTasksMap] = useState<Map<string, DownloadStatus>>(
     new Map()
   );
+  // 最近完成/失败/取消的任务（用于按钮状态兜底，不用于“进行中的下载列表”展示）
+  const [recentCompletedMap, setRecentCompletedMap] = useState<
+    Map<string, DownloadStatus>
+  >(new Map());
   const [allTasks, setAllTasks] = useState<DownloadStatus[]>([]);
   const [loading, setLoading] = useState(true);
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -88,6 +92,7 @@ export default function DownloadStatusProvider({
 
       setAllTasks(data.tasks); // 存储所有任务
       const newTasksMap = new Map<string, DownloadStatus>();
+      const newRecentCompletedMap = new Map<string, DownloadStatus>();
 
       data.tasks.forEach((task) => {
         // 如果指定了 seriesKey，只保留该系列的任务
@@ -99,7 +104,17 @@ export default function DownloadStatusProvider({
         newTasksMap.set(key, task);
       });
 
+      // 最近完成任务：用于 episode 按钮状态切换（completed/failed/cancelled）
+      (data.recent_completed || []).forEach((task) => {
+        if (seriesKey && task.series_key !== seriesKey) {
+          return;
+        }
+        const key = `${task.series_key}_${task.episode_index}`;
+        newRecentCompletedMap.set(key, task);
+      });
+
       setTasksMap(newTasksMap);
+      setRecentCompletedMap(newRecentCompletedMap);
       setLoading(false);
     } catch {
       if (mountedRef.current) {
@@ -169,7 +184,7 @@ export default function DownloadStatusProvider({
     () => ({
       getTaskStatus: (targetSeriesKey: string, episodeIndex: number) => {
         const key = `${targetSeriesKey}_${episodeIndex}`;
-        return tasksMap.get(key);
+        return tasksMap.get(key) || recentCompletedMap.get(key);
       },
       getAllTasksForSeries: (targetSeriesKey: string) => {
         return Array.from(tasksMap.values()).filter(
@@ -186,7 +201,7 @@ export default function DownloadStatusProvider({
       refresh,
       loading,
     }),
-    [tasksMap, allTasks, seriesKey, loading, refresh]
+    [tasksMap, recentCompletedMap, allTasks, seriesKey, loading, refresh]
   );
 
   return (

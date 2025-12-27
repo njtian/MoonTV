@@ -226,6 +226,7 @@ export class VideoDownloadService {
           } else {
             task.status = 'failed';
             task.error = (error as Error).message;
+            task.updated_at = Date.now();
             await this.saveTask(task);
           }
         } finally {
@@ -313,6 +314,7 @@ export class VideoDownloadService {
 
           task.status = 'completed';
           task.progress = 1;
+          task.updated_at = Date.now();
           await this.saveTask(task);
           downloadSuccess = true;
           break;
@@ -1259,6 +1261,64 @@ export class VideoDownloadService {
     }
 
     return activeStatuses;
+  }
+
+  /**
+   * 获取任务快照：活跃任务 + 最近完成/失败/取消的任务
+   * @param recentCompletedMs 最近窗口（毫秒），默认 5 分钟
+   */
+  async getTasksSnapshot(recentCompletedMs: number = 5 * 60 * 1000): Promise<{
+    active: DownloadStatus[];
+    recent_completed: DownloadStatus[];
+  }> {
+    await this.initialize();
+
+    const active: DownloadStatus[] = [];
+    const recent_completed: DownloadStatus[] = [];
+
+    const now = Date.now();
+
+    try {
+      const fs = await import('fs/promises');
+      const taskFiles = await fs.readdir(this.tasksDir).catch(() => []);
+
+      for (const fileName of taskFiles) {
+        if (!fileName.endsWith('.json')) continue;
+
+        const taskFile = path.join(this.tasksDir, fileName);
+
+        if (!validatePath(taskFile, this.tasksDir)) {
+          continue;
+        }
+
+        const task = await safeReadFile<DownloadTask>(taskFile);
+        if (!task) continue;
+
+        const status = await this.getDownloadStatus(task.task_id);
+        if (!status) continue;
+
+        if (
+          status.status !== 'completed' &&
+          status.status !== 'failed' &&
+          status.status !== 'cancelled'
+        ) {
+          active.push(status);
+          continue;
+        }
+
+        // 最近完成/失败/取消：用 updated_at 作为时间戳
+        if (
+          recentCompletedMs > 0 &&
+          now - status.updated_at <= recentCompletedMs
+        ) {
+          recent_completed.push(status);
+        }
+      }
+    } catch {
+      // 静默处理错误
+    }
+
+    return { active, recent_completed };
   }
 
   /**

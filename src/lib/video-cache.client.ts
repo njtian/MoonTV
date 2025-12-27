@@ -335,6 +335,8 @@ export async function hasPartialDownload(
 export async function getAllActiveTasks(): Promise<{
   tasks: DownloadStatus[];
   total: number;
+  recent_completed?: DownloadStatus[];
+  total_recent_completed?: number;
 }> {
   const response = await fetch('/api/download/status');
 
@@ -344,26 +346,53 @@ export async function getAllActiveTasks(): Promise<{
   }
 
   const data = await response.json();
+  const isRecord = (v: unknown): v is Record<string, unknown> =>
+    typeof v === 'object' && v !== null;
+
   // 转换时间戳：API 返回 ISO 字符串，需要转换为时间戳（毫秒）
+  const normalize = (
+    task: DownloadStatus & {
+      started_at: string | number;
+      updated_at: string | number;
+    }
+  ): DownloadStatus => ({
+    ...task,
+    started_at:
+      typeof task.started_at === 'string'
+        ? new Date(task.started_at).getTime()
+        : task.started_at,
+    updated_at:
+      typeof task.updated_at === 'string'
+        ? new Date(task.updated_at).getTime()
+        : task.updated_at,
+  });
+
   return {
-    tasks: data.tasks.map(
+    tasks: (data.tasks || []).map(
       (
         task: DownloadStatus & {
           started_at: string | number;
           updated_at: string | number;
         }
-      ) => ({
-        ...task,
-        started_at:
-          typeof task.started_at === 'string'
-            ? new Date(task.started_at).getTime()
-            : task.started_at,
-        updated_at:
-          typeof task.updated_at === 'string'
-            ? new Date(task.updated_at).getTime()
-            : task.updated_at,
-      })
+      ) => normalize(task)
     ),
-    total: data.total,
+    recent_completed: Array.isArray(
+      (data as { recent_completed?: unknown }).recent_completed
+    )
+      ? (data as { recent_completed: unknown[] }).recent_completed
+          .filter(isRecord)
+          .map((t) =>
+            normalize(
+              t as DownloadStatus & {
+                started_at: string | number;
+                updated_at: string | number;
+              }
+            )
+          )
+      : undefined,
+    total: (data as { total: number }).total,
+    total_recent_completed: isRecord(data)
+      ? (data.total_recent_completed as number | undefined)
+      : undefined,
   };
 }

@@ -178,7 +178,7 @@ export default function DownloadsPage() {
   return (
     <Suspense fallback={<div>加载中...</div>}>
       <PageLayout activePath='/downloads'>
-        <DownloadStatusProvider pollInterval={2000}>
+        <DownloadStatusProvider pollInterval={5000}>
           <DownloadsPageContent />
         </DownloadStatusProvider>
       </PageLayout>

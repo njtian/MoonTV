@@ -38,5 +38,6 @@ COPY --chown=nextjs:nodejs scripts ./scripts
 EXPOSE 3001
 
 # 使用入口脚本启动（会在 root 下修复 /app/.cache，然后降权到 nextjs）
+# 使用 start.js 启动以确保 cron 任务自动执行
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
-CMD ["npm", "start"]
+CMD ["node", "start.js"]

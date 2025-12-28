@@ -300,6 +300,13 @@ function PlayPageClient() {
   // 工具函数（Utils）
   // -----------------------------------------------------------------------------
 
+  const isM3u8LikeUrl = (url: string) => /\.m3u8(\?|#|$)/i.test(url);
+
+  const countPlayableEpisodes = (episodes?: string[]) => {
+    if (!episodes || episodes.length === 0) return 0;
+    return episodes.reduce((acc, u) => acc + (isM3u8LikeUrl(u) ? 1 : 0), 0);
+  };
+
   // 播放源优选函数
   const preferBestSource = async (
     sources: SearchResult[]
@@ -928,7 +935,23 @@ function PlayPageClient() {
                 _series_key?: string;
               };
             // 合并完整数据到 detailData
-            detailData = { ...detailData, ...fullDetailData };
+            // IMPORTANT (regression fix):
+            // /api/search already extracts playable m3u8 URLs for many sources.
+            // Some /api/detail responses may return non-playable intermediate/share URLs
+            // which are blocked by browser CORS and cause the player to hang.
+            // Keep the "more playable" episode list.
+            const oldEpisodes = detailData.episodes;
+            const newEpisodes = fullDetailData.episodes;
+            const oldPlayable = countPlayableEpisodes(oldEpisodes);
+            const newPlayable = countPlayableEpisodes(newEpisodes);
+            detailData = {
+              ...detailData,
+              ...fullDetailData,
+              episodes:
+                oldPlayable >= newPlayable
+                  ? oldEpisodes || newEpisodes
+                  : newEpisodes || oldEpisodes,
+            };
           }
         } catch (err) {
           console.warn('获取 series_key 失败:', err);
@@ -1096,8 +1119,19 @@ function PlayPageClient() {
             const detailData = (await detailResponse.json()) as SearchResult & {
               _series_key?: string;
             };
-            // 合并 _series_key 到 newDetail
-            newDetail = { ...newDetail, ...detailData };
+            // 合并 _series_key 到 newDetail，但保留更“可播放”的 episodes 列表（见上方说明）
+            const oldEpisodes = newDetail.episodes;
+            const newEpisodes = detailData.episodes;
+            const oldPlayable = countPlayableEpisodes(oldEpisodes);
+            const newPlayable = countPlayableEpisodes(newEpisodes);
+            newDetail = {
+              ...newDetail,
+              ...detailData,
+              episodes:
+                oldPlayable >= newPlayable
+                  ? oldEpisodes || newEpisodes
+                  : newEpisodes || oldEpisodes,
+            };
           }
         } catch (err) {
           console.warn('获取新源的 series_key 失败:', err);
@@ -2053,8 +2087,11 @@ function PlayPageClient() {
       Artplayer.USE_RAF = true;
 
       // 检测URL是否为已下载文件的播放URL（需要M3U8类型）
+      // 关键：未下载的在线播放大多也是 m3u8，但在 Chrome 等浏览器里原生 <video> 不支持 HLS。
+      // 如果不显式设置 type='m3u8'，ArtPlayer 不会走 customType.m3u8（hls.js），从而导致“未下载无法播放”。
       const isDownloadedUrl = videoUrl.startsWith('/api/download/play');
-      const videoType = isDownloadedUrl ? 'm3u8' : undefined;
+      const isM3u8Like = isDownloadedUrl || /\.m3u8(\?|#|$)/i.test(videoUrl);
+      const videoType = isM3u8Like ? 'm3u8' : undefined;
 
       console.log('创建播放器:', {
         url: videoUrl,
@@ -2062,10 +2099,14 @@ function PlayPageClient() {
         isDownloadedUrl,
       });
 
+      // IMPORTANT:
+      // In the pre-cache era we did NOT pass `type` at all, and ArtPlayer would infer it (e.g. from .m3u8).
+      // Passing `type: undefined` can change ArtPlayer's inference behavior and break HLS playback.
+      // So we only set `type` when we explicitly want to force it.
       artPlayerRef.current = new Artplayer({
         container: artRef.current,
         url: videoUrl,
-        type: videoType, // 显式指定类型为m3u8（如果是已下载文件）
+        ...(videoType ? { type: videoType } : {}),
         poster: videoCover,
         volume: 0.7,
         isLive: false,
@@ -2493,6 +2534,10 @@ function PlayPageClient() {
         if (artPlayerRef.current.currentTime > 0) {
           return;
         }
+        // 不要卡在“视频加载中...”
+        setIsVideoLoading(false);
+        // 给一个更明确的错误提示
+        setError('视频加载失败（可能是跨域限制/播放地址不可直连），请尝试换源');
         // 记录详细错误信息
         if (err && typeof err === 'object') {
           console.error('播放器错误详情:', {

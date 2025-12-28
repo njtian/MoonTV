@@ -40,7 +40,6 @@ export interface CacheMeta {
   access_count: number;
   last_accessed: number;
   episode_count: number;
-  cached_episodes: number[];
   source_count: number;
 }
 
@@ -53,7 +52,6 @@ export interface CacheIndexEntry {
   year: string;
   douban_id?: number;
   episode_count: number;
-  cached_episodes: number[];
   sources: string[];
   created_at: number;
   expires_at: number;
@@ -80,8 +78,6 @@ export interface CacheEntry {
   year: string;
   douban_id?: number;
   episode_count: number;
-  cached_episodes: number[];
-  cached_episode_count: number;
   sources: string[];
   created_at: number;
   expires_at: number;
@@ -90,28 +86,6 @@ export interface CacheEntry {
   file_size_bytes: number;
   access_count: number;
   last_accessed: number;
-}
-
-/**
- * 缓存统计信息
- */
-export interface CacheStats {
-  total_cached: number;
-  total_size_bytes: number;
-  total_size_mb: number;
-  oldest_cache: number;
-  newest_cache: number;
-  hit_count: number;
-  miss_count: number;
-  hit_rate: number;
-  average_file_size_bytes: number;
-  series_by_source: {
-    [source: string]: {
-      series_count: number;
-      episode_count: number;
-    };
-  };
-  last_cleaned: number;
 }
 
 /**

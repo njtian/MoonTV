@@ -49,8 +49,6 @@ export async function GET(request: Request) {
     if (isValid) {
       cachedData = await videoCacheService.getSeries(seriesKey);
       if (cachedData) {
-        await videoCacheService.recordHit();
-
         // 合并新源的集数链接到缓存数据
         // 将新源的集数链接添加到响应中
         const mergedEpisodes = [...result.episodes];
@@ -102,8 +100,6 @@ export async function GET(request: Request) {
     }
 
     // 缓存未命中或无效，使用API数据
-    await videoCacheService.recordMiss();
-
     // 异步写入缓存（不阻塞响应）
     videoCacheService.setSeries(seriesKey, result).catch((err) => {
       // eslint-disable-next-line no-console

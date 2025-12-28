@@ -5,6 +5,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { fetchVideoDetail } from '@/lib/fetchVideoDetail';
 import { SearchResult } from '@/lib/types';
+import { getVideoCacheService } from '@/lib/video-cache';
+import { getVideoDownloadService } from '@/lib/video-download-service';
 
 // export const runtime = 'edge'; // 注释掉Edge Runtime，因为Redis客户端不兼容
 
@@ -14,6 +16,38 @@ export async function GET(request: NextRequest) {
     console.log('Cron job triggered:', new Date().toISOString());
 
     refreshRecordAndFavorites();
+
+    // 清理旧的任务文件（3天以上）
+    try {
+      const videoDownloadService = getVideoDownloadService();
+      await videoDownloadService.initialize();
+      const cleanupResult = await videoDownloadService.cleanupOldTasks(3);
+      console.log(
+        `任务文件清理完成: 删除 ${cleanupResult.deleted_count} 个文件，释放 ${cleanupResult.freed_space_kb} KB`
+      );
+    } catch (cleanupError) {
+      console.error('清理任务文件失败:', cleanupError);
+      // 清理失败不影响其他 cron 任务
+    }
+
+    // 清理过期的剧集信息缓存
+    try {
+      const videoCacheService = getVideoCacheService();
+      await videoCacheService.initialize();
+
+      const cleanupResult = await videoCacheService.clear({
+        type: 'expired',
+      });
+
+      console.log(
+        `缓存清理完成: 删除 ${
+          cleanupResult.deleted_count
+        } 个缓存，释放 ${cleanupResult.freed_space_mb.toFixed(2)} MB`
+      );
+    } catch (cleanupError) {
+      console.error('清理缓存失败:', cleanupError);
+      // 清理失败不影响其他 cron 任务
+    }
 
     return NextResponse.json({
       success: true,

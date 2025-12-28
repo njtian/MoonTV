@@ -3,8 +3,6 @@
  */
 
 import {
-  CacheEntry,
-  CacheStats,
   ClearOptions,
   ClearResult,
   DownloadedItem,
@@ -51,63 +49,6 @@ export async function notifyPlaybackSuccess(
     const error = await response.json().catch(() => ({ error: '未知错误' }));
     throw new Error(error.error || '更新缓存失败');
   }
-}
-
-/**
- * 获取缓存状态
- */
-export async function getCacheStatus(filter?: {
-  seriesKey?: string;
-  title?: string;
-  doubanId?: number;
-}): Promise<{
-  cache_enabled: boolean;
-  cache_dir: string;
-  total_cached: number;
-  total_size_mb: number;
-  entries: CacheEntry[];
-  stats: {
-    hit_count: number;
-    miss_count: number;
-    hit_rate: number;
-  };
-}> {
-  const params = new URLSearchParams();
-  if (filter?.seriesKey) {
-    params.append('series_key', filter.seriesKey);
-  }
-  if (filter?.title) {
-    params.append('title', filter.title);
-  }
-  if (filter?.doubanId) {
-    params.append('douban_id', filter.doubanId.toString());
-  }
-
-  const url = `/api/cache/status${
-    params.toString() ? `?${params.toString()}` : ''
-  }`;
-  const response = await fetch(url);
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: '未知错误' }));
-    throw new Error(error.error || '获取缓存状态失败');
-  }
-
-  return response.json();
-}
-
-/**
- * 获取缓存统计信息
- */
-export async function getCacheStats(): Promise<CacheStats> {
-  const response = await fetch('/api/cache/stats');
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: '未知错误' }));
-    throw new Error(error.error || '获取缓存统计失败');
-  }
-
-  return response.json();
 }
 
 /**

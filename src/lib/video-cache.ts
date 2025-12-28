@@ -9,7 +9,6 @@ import {
   CacheIndex,
   CacheIndexEntry,
   CacheMeta,
-  CacheStats,
   ClearOptions,
   ClearResult,
   EpisodeLink,
@@ -33,14 +32,12 @@ export class VideoCacheService {
   private cacheDir: string;
   private videosDir: string;
   private indexFile: string;
-  private statsFile: string;
   private initialized = false;
 
   constructor() {
     this.cacheDir = getCacheDir();
     this.videosDir = path.join(this.cacheDir, 'videos');
     this.indexFile = path.join(this.cacheDir, 'index.json');
-    this.statsFile = path.join(this.cacheDir, 'stats.json');
   }
 
   /**
@@ -77,28 +74,6 @@ export class VideoCacheService {
       await atomicWriteFile(
         this.indexFile,
         JSON.stringify(initialIndex, null, 2)
-      );
-    }
-
-    // 初始化统计文件
-    const statsExists = await safeReadFile<CacheStats>(this.statsFile);
-    if (!statsExists) {
-      const initialStats: CacheStats = {
-        total_cached: 0,
-        total_size_bytes: 0,
-        total_size_mb: 0,
-        oldest_cache: 0,
-        newest_cache: 0,
-        hit_count: 0,
-        miss_count: 0,
-        hit_rate: 0,
-        average_file_size_bytes: 0,
-        series_by_source: {},
-        last_cleaned: 0,
-      };
-      await atomicWriteFile(
-        this.statsFile,
-        JSON.stringify(initialStats, null, 2)
       );
     }
 
@@ -204,11 +179,6 @@ export class VideoCacheService {
       last_updated: now,
     };
 
-    // 计算缓存的集数索引
-    const cachedEpisodes = Object.keys(episodes)
-      .map(Number)
-      .sort((a, b) => a - b);
-
     // 构建元数据
     const meta: CacheMeta = {
       series_key: seriesKey,
@@ -223,7 +193,6 @@ export class VideoCacheService {
         : 0,
       last_accessed: now,
       episode_count: cachedSeries.total_episodes,
-      cached_episodes: cachedEpisodes,
       source_count: cachedSeries.sources.length,
     };
 
@@ -237,10 +206,6 @@ export class VideoCacheService {
 
     // 更新索引
     await this.updateIndex();
-    // 异步更新统计（不阻塞）
-    this.updateStats().catch(() => {
-      // 静默处理错误
-    });
   }
 
   /**
@@ -282,9 +247,6 @@ export class VideoCacheService {
     const deleted = await safeDeleteDirectory(seriesDir);
     if (deleted) {
       await this.updateIndex();
-      this.updateStats().catch(() => {
-        // 静默处理错误
-      });
     }
     return deleted;
   }
@@ -311,7 +273,6 @@ export class VideoCacheService {
     // 更新缓存数据
     const seriesDir = path.join(this.videosDir, seriesKey);
     const dataFile = path.join(seriesDir, 'data.json');
-    const metaFile = path.join(seriesDir, 'meta.json');
 
     // 验证路径安全
     if (!validatePath(dataFile, this.videosDir)) {
@@ -319,15 +280,6 @@ export class VideoCacheService {
     }
 
     await atomicWriteFile(dataFile, JSON.stringify(series, null, 2));
-
-    // 更新元数据
-    const meta = await safeReadFile<CacheMeta>(metaFile);
-    if (meta) {
-      meta.cached_episodes = meta.cached_episodes.filter(
-        (ep) => ep !== episodeIndex
-      );
-      await atomicWriteFile(metaFile, JSON.stringify(meta, null, 2));
-    }
 
     await this.updateIndex();
     return true;
@@ -386,8 +338,6 @@ export class VideoCacheService {
           year: entry.year,
           douban_id: entry.douban_id,
           episode_count: entry.episode_count,
-          cached_episodes: entry.cached_episodes,
-          cached_episode_count: entry.cached_episodes.length,
           sources: entry.sources,
           created_at: entry.created_at,
           expires_at: entry.expires_at,
@@ -401,21 +351,6 @@ export class VideoCacheService {
     }
 
     return result;
-  }
-
-  /**
-   * 获取缓存统计
-   */
-  async getStats(): Promise<CacheStats> {
-    await this.initialize();
-
-    const stats = await safeReadFile<CacheStats>(this.statsFile);
-    if (stats) {
-      return stats;
-    }
-
-    // 如果统计文件不存在，重新计算
-    return this.updateStats();
   }
 
   /**
@@ -490,9 +425,8 @@ export class VideoCacheService {
         freedSpaceBytes = 0;
       }
 
-      // 更新索引和统计
+      // 更新索引
       await this.updateIndex();
-      await this.updateStats();
 
       return {
         success: true,
@@ -508,34 +442,6 @@ export class VideoCacheService {
         message: `清理失败: ${(error as Error).message}`,
       };
     }
-  }
-
-  /**
-   * 记录缓存命中
-   */
-  async recordHit(): Promise<void> {
-    await this.initialize();
-
-    const stats = await this.getStats();
-    stats.hit_count++;
-    stats.hit_rate =
-      stats.hit_count / (stats.hit_count + stats.miss_count) || 0;
-
-    await atomicWriteFile(this.statsFile, JSON.stringify(stats, null, 2));
-  }
-
-  /**
-   * 记录缓存未命中
-   */
-  async recordMiss(): Promise<void> {
-    await this.initialize();
-
-    const stats = await this.getStats();
-    stats.miss_count++;
-    stats.hit_rate =
-      stats.hit_count / (stats.hit_count + stats.miss_count) || 0;
-
-    await atomicWriteFile(this.statsFile, JSON.stringify(stats, null, 2));
   }
 
   /**
@@ -587,17 +493,12 @@ export class VideoCacheService {
         const meta = await safeReadFile<CacheMeta>(metaFile);
 
         if (data && meta) {
-          const cachedEpisodes = Object.keys(data.episodes)
-            .map(Number)
-            .sort((a, b) => a - b);
-
           const entry: CacheIndexEntry = {
             series_key: seriesKey,
             title: data.title,
             year: data.year,
             douban_id: data.douban_id,
             episode_count: data.total_episodes,
-            cached_episodes: cachedEpisodes,
             sources: data.sources,
             created_at: meta.created_at,
             expires_at: meta.expires_at,
@@ -628,79 +529,6 @@ export class VideoCacheService {
     } catch {
       // 静默处理错误
     }
-  }
-
-  /**
-   * 更新统计信息
-   */
-  private async updateStats(): Promise<CacheStats> {
-    const index = await safeReadFile<CacheIndex>(this.indexFile);
-    const existingStats = await safeReadFile<CacheStats>(this.statsFile);
-
-    const stats: CacheStats = {
-      total_cached: 0,
-      total_size_bytes: 0,
-      total_size_mb: 0,
-      oldest_cache: 0,
-      newest_cache: 0,
-      hit_count: existingStats?.hit_count || 0,
-      miss_count: existingStats?.miss_count || 0,
-      hit_rate: 0,
-      average_file_size_bytes: 0,
-      series_by_source: {},
-      last_cleaned: existingStats?.last_cleaned || 0,
-    };
-
-    if (!index) {
-      await atomicWriteFile(this.statsFile, JSON.stringify(stats, null, 2));
-      return stats;
-    }
-
-    stats.total_cached = index.entries.length;
-
-    let totalSize = 0;
-    let oldestTime = Infinity;
-    let newestTime = 0;
-    const sourceMap: {
-      [source: string]: { series_count: number; episode_count: number };
-    } = {};
-
-    for (const entry of index.entries) {
-      const seriesDir = path.join(this.videosDir, entry.series_key);
-      if (validatePath(seriesDir, this.videosDir)) {
-        const size = await getDirectorySize(seriesDir);
-        totalSize += size;
-
-        if (entry.created_at < oldestTime) {
-          oldestTime = entry.created_at;
-        }
-        if (entry.created_at > newestTime) {
-          newestTime = entry.created_at;
-        }
-
-        // 统计按源的数据
-        for (const source of entry.sources) {
-          if (!sourceMap[source]) {
-            sourceMap[source] = { series_count: 0, episode_count: 0 };
-          }
-          sourceMap[source].series_count++;
-          sourceMap[source].episode_count += entry.cached_episodes.length;
-        }
-      }
-    }
-
-    stats.total_size_bytes = totalSize;
-    stats.total_size_mb = totalSize / (1024 * 1024);
-    stats.oldest_cache = oldestTime === Infinity ? 0 : oldestTime;
-    stats.newest_cache = newestTime;
-    stats.hit_rate =
-      stats.hit_count / (stats.hit_count + stats.miss_count) || 0;
-    stats.average_file_size_bytes =
-      stats.total_cached > 0 ? totalSize / stats.total_cached : 0;
-    stats.series_by_source = sourceMap;
-
-    await atomicWriteFile(this.statsFile, JSON.stringify(stats, null, 2));
-    return stats;
   }
 }
 

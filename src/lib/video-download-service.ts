@@ -18,7 +18,9 @@ import {
   ensureDirectory,
   getCacheDir,
   getDirectorySize,
+  getFileSize,
   safeDeleteDirectory,
+  safeDeleteFile,
   safeReadFile,
   validatePath,
 } from './video-cache-utils';
@@ -1319,6 +1321,67 @@ export class VideoDownloadService {
     }
 
     return { active, recent_completed };
+  }
+
+  /**
+   * 清理旧的任务文件
+   * @param maxAgeDays 保留最近 N 天的任务，默认 3 天
+   * @returns 返回删除的文件数量和释放的空间（KB）
+   */
+  async cleanupOldTasks(maxAgeDays = 3): Promise<{
+    deleted_count: number;
+    freed_space_kb: number;
+  }> {
+    await this.initialize();
+
+    const now = Date.now();
+    const maxAge = maxAgeDays * 24 * 60 * 60 * 1000;
+    let deletedCount = 0;
+    let freedSpaceBytes = 0;
+
+    try {
+      const fs = await import('fs/promises');
+      const taskFiles = await fs.readdir(this.tasksDir).catch(() => []);
+
+      for (const fileName of taskFiles) {
+        if (!fileName.endsWith('.json')) {
+          continue;
+        }
+
+        const taskFile = path.join(this.tasksDir, fileName);
+        if (!validatePath(taskFile, this.tasksDir)) {
+          continue;
+        }
+
+        const task = await safeReadFile<DownloadTask>(taskFile);
+        if (!task) {
+          continue;
+        }
+
+        // 只清理已完成、失败或取消的任务
+        const isTerminalStatus =
+          task.status === 'completed' ||
+          task.status === 'failed' ||
+          task.status === 'cancelled';
+
+        if (isTerminalStatus && now - task.updated_at > maxAge) {
+          const size = await getFileSize(taskFile).catch(() => 0);
+          if (await safeDeleteFile(taskFile)) {
+            deletedCount++;
+            freedSpaceBytes += size;
+          }
+        }
+      }
+    } catch (error) {
+      // 记录错误但不抛出
+      // eslint-disable-next-line no-console
+      console.error('清理任务文件失败:', error);
+    }
+
+    return {
+      deleted_count: deletedCount,
+      freed_space_kb: Math.round(freedSpaceBytes / 1024),
+    };
   }
 
   /**

@@ -15,8 +15,8 @@ maybe_fix_cache_permissions() {
   fi
 
   # If anything under /app/.cache is not owned by TARGET_UID/GID, fix it.
-  # Using numeric ids avoids relying on user/group names being present.
-  NEED_FIX="$(find /app/.cache \( -not -uid "$TARGET_UID" -o -not -gid "$TARGET_GID" \) -print -quit 2>/dev/null || true)"
+  # BusyBox find supports -user/-group (NAME or numeric ID).
+  NEED_FIX="$(find /app/.cache \( -not -user "$TARGET_UID" -o -not -group "$TARGET_GID" \) -print -quit 2>/dev/null || true)"
   if [ -n "$NEED_FIX" ]; then
     echo "[entrypoint] Fixing ownership for /app/.cache -> ${TARGET_UID}:${TARGET_GID}"
     chown -R "$TARGET_UID:$TARGET_GID" /app/.cache || true

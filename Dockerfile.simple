@@ -19,6 +19,10 @@ LABEL version="${VERSION}"
 LABEL maintainer="MoonTV Team"
 LABEL description="MoonTV - 影视信息搜索服务"
 
+# 入口脚本：启动时自动修复 /app/.cache 权限，然后降权运行
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
 # 复制构建好的文件
 COPY --chown=nextjs:nodejs .next/server ./.next/server
 COPY --chown=nextjs:nodejs .next/static ./.next/static
@@ -31,10 +35,8 @@ COPY --chown=nextjs:nodejs package.json ./package.json
 COPY --chown=nextjs:nodejs node_modules ./node_modules
 COPY --chown=nextjs:nodejs scripts ./scripts
 
-# 切换到非特权用户
-USER nextjs
-
 EXPOSE 3001
 
-# 使用Next.js启动命令
+# 使用入口脚本启动（会在 root 下修复 /app/.cache，然后降权到 nextjs）
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["npm", "start"]

@@ -383,7 +383,7 @@ export async function getAllActiveTasks(): Promise<{
           .filter(isRecord)
           .map((t) =>
             normalize(
-              t as DownloadStatus & {
+              t as unknown as DownloadStatus & {
                 started_at: string | number;
                 updated_at: string | number;
               }

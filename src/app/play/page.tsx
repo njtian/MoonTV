@@ -2419,11 +2419,13 @@ function PlayPageClient() {
       artPlayerRef.current.on('ready', () => {
         setError(null);
         // 尝试通知服务器更新缓存（不等待结果）
+        // 注意：本地下载URL不应该更新到episodes缓存中
         if (
           seriesKeyRef.current &&
           currentEpisodeIndexRef.current >= 0 &&
           videoUrl &&
-          !notifiedRef.current
+          !notifiedRef.current &&
+          !videoUrl.startsWith('/api/download/play')
         ) {
           notifiedRef.current = true;
           notifyPlaybackSuccess(
@@ -2562,12 +2564,14 @@ function PlayPageClient() {
 
       artPlayerRef.current.on('video:timeupdate', () => {
         // 缓存更新确认通知：播放超过10秒时确认通知
+        // 注意：本地下载URL不应该更新到episodes缓存中
         if (
           !notifiedConfirmedRef.current &&
           artPlayerRef.current.currentTime > 10 &&
           seriesKeyRef.current &&
           currentEpisodeIndexRef.current >= 0 &&
-          videoUrl
+          videoUrl &&
+          !videoUrl.startsWith('/api/download/play')
         ) {
           notifiedConfirmedRef.current = true;
           notifyPlaybackSuccess(

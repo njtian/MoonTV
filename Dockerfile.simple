@@ -23,16 +23,14 @@ LABEL description="MoonTV - 影视信息搜索服务"
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# 复制构建好的文件
-COPY --chown=nextjs:nodejs .next/server ./.next/server
+# 复制 standalone 构建输出（包含 server.js）
+COPY --chown=nextjs:nodejs .next/standalone ./
+# 复制 static 文件
 COPY --chown=nextjs:nodejs .next/static ./.next/static
-COPY --chown=nextjs:nodejs .next/BUILD_ID ./.next/BUILD_ID
-COPY --chown=nextjs:nodejs .next/*.json ./.next/
+# 复制额外的必要文件
 COPY --chown=nextjs:nodejs public ./public
 COPY --chown=nextjs:nodejs config.json ./config.json
 COPY --chown=nextjs:nodejs start.js ./start.js
-COPY --chown=nextjs:nodejs package.json ./package.json
-COPY --chown=nextjs:nodejs node_modules ./node_modules
 COPY --chown=nextjs:nodejs scripts ./scripts
 
 EXPOSE 3001

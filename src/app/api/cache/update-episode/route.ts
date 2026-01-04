@@ -12,6 +12,16 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: '缺少必要参数' }, { status: 400 });
     }
 
+    // 本地下载URL不应该更新到episodes缓存中
+    // episodes缓存只应该存储远程源的链接
+    if (url.startsWith('/api/download/play')) {
+      return NextResponse.json({
+        success: true,
+        message: '本地下载URL已跳过，不会更新到episodes缓存',
+        series_key,
+      });
+    }
+
     const videoCacheService = getVideoCacheService();
     await videoCacheService.initialize();
 

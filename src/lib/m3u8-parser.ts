@@ -8,33 +8,183 @@ import {
 /**
  * 下载M3U8文件
  */
-export async function downloadM3U8File(url: string): Promise<string> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30秒超时
+export async function downloadM3U8File(
+  url: string,
+  resolveDepth = 0,
+  cookieHeader?: string
+): Promise<string> {
+  const USER_AGENT =
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
 
-  try {
-    const response = await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-      },
+  const maxResolveDepth = 1; // 仅允许一次 HTML -> m3u8 解析，避免死循环
+
+  const fetchText = async (
+    fetchUrl: string,
+    cookie?: string
+  ): Promise<{
+    text: string;
+    contentType: string;
+    cookieHeader?: string;
+  }> => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30秒超时
+
+    try {
+      const response = await fetch(fetchUrl, {
+        signal: controller.signal,
+        headers: {
+          'User-Agent': USER_AGENT,
+          ...(cookie ? { Cookie: cookie } : {}),
+        },
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const contentType = response.headers.get('content-type') || '';
+
+      // best-effort: 尝试带上 set-cookie（不同运行时实现不同）
+      let extractedCookie: string | undefined;
+      const anyHeaders = response.headers as unknown as {
+        getSetCookie?: () => string[];
+      };
+      const setCookies = anyHeaders.getSetCookie?.();
+      if (setCookies && Array.isArray(setCookies) && setCookies.length > 0) {
+        extractedCookie = setCookies
+          .map((c) => c.split(';')[0])
+          .filter(Boolean)
+          .join('; ');
+      } else {
+        const setCookie = response.headers.get('set-cookie');
+        if (setCookie) {
+          extractedCookie = setCookie.split(';')[0];
+        }
+      }
+
+      return {
+        text: await response.text(),
+        contentType,
+        cookieHeader: extractedCookie,
+      };
+    } catch (error) {
+      clearTimeout(timeoutId);
+      if ((error as Error).name === 'AbortError') {
+        throw new Error('下载M3U8文件超时');
+      }
+      throw error;
+    }
+  };
+
+  const isValidM3U8 = (text: string): boolean => {
+    return text.trimStart().startsWith('#EXTM3U');
+  };
+
+  const rewriteM3U8UrlsToAbsolute = (m3u8Text: string, playlistUrl: string) => {
+    const lines = m3u8Text.split('\n');
+    const rewritten = lines.map((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return line;
+
+      // Rewrite key URI inside tag lines (important if baseUrl at caller is wrong)
+      if (trimmed.startsWith('#EXT-X-KEY:') && trimmed.includes('URI="')) {
+        const uriMatch = trimmed.match(/URI="([^"]+)"/);
+        if (uriMatch?.[1]) {
+          const uri = uriMatch[1];
+          if (!uri.startsWith('http://') && !uri.startsWith('https://')) {
+            try {
+              const abs = new URL(uri, playlistUrl).href;
+              return trimmed.replace(/URI="([^"]+)"/, `URI="${abs}"`);
+            } catch {
+              return line;
+            }
+          }
+        }
+        return line;
+      }
+
+      // Non-tag lines are URLs (stream playlist / media segment)
+      if (!trimmed.startsWith('#')) {
+        if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+          return trimmed;
+        }
+        try {
+          return new URL(trimmed, playlistUrl).href;
+        } catch {
+          return line;
+        }
+      }
+
+      return line;
     });
 
-    clearTimeout(timeoutId);
+    return rewritten.join('\n');
+  };
 
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+  const isLikelyHtml = (text: string, contentType: string): boolean => {
+    const t = text.trimStart();
+    if (contentType.toLowerCase().includes('text/html')) return true;
+    if (t.startsWith('<!doctype') || t.startsWith('<html') || t.startsWith('<'))
+      return true;
+    return false;
+  };
+
+  const extractM3U8UrlFromHtml = (
+    html: string,
+    baseUrl: string
+  ): string | null => {
+    // 1) var main = "/path/index.m3u8?sign=..."
+    const mainVarMatch = html.match(/var\s+main\s*=\s*["']([^"']+)["']\s*;/i);
+    if (mainVarMatch?.[1] && mainVarMatch[1].includes('.m3u8')) {
+      try {
+        return new URL(mainVarMatch[1], baseUrl).href;
+      } catch {
+        // ignore
+      }
     }
 
-    return await response.text();
-  } catch (error) {
-    clearTimeout(timeoutId);
-    if ((error as Error).name === 'AbortError') {
-      throw new Error('下载M3U8文件超时');
-    }
-    throw error;
+    // 2) 兜底：任意绝对 m3u8
+    const absMatch = html.match(/https?:\/\/[^\s"'<>]+?\.m3u8[^\s"'<>]*/i);
+    if (absMatch?.[0]) return absMatch[0];
+
+    return null;
+  };
+
+  const {
+    text,
+    contentType,
+    cookieHeader: responseCookie,
+  } = await fetchText(url, cookieHeader);
+
+  if (isValidM3U8(text)) {
+    return text;
   }
+
+  // 兼容 lzi share 等返回 HTML 的情况：从 HTML 中解析真实 m3u8 再请求一次
+  if (resolveDepth < maxResolveDepth && isLikelyHtml(text, contentType)) {
+    const resolved = extractM3U8UrlFromHtml(text, url);
+    if (!resolved) {
+      throw new Error('返回内容不是M3U8，且无法从HTML中解析出真实M3U8地址');
+    }
+    const { text: resolvedText, contentType: resolvedType } = await fetchText(
+      resolved,
+      responseCookie || cookieHeader
+    );
+    if (!isValidM3U8(resolvedText)) {
+      throw new Error(
+        `已解析到真实地址，但返回内容仍不是M3U8 (${resolvedType || 'unknown'})`
+      );
+    }
+
+    // 关键兼容性：当原始 url 是 share 页时，调用方会用 share 的 baseUrl 去 resolve 相对路径
+    // 这里把 resolved 播放列表里的相对 URL 全部改写为绝对 URL，避免后续解析/下载走错路径
+    return rewriteM3U8UrlsToAbsolute(resolvedText, resolved);
+  }
+
+  // 非 m3u8 且不满足 HTML fallback 条件
+  throw new Error('返回内容不是有效的M3U8播放列表');
 }
 
 /**

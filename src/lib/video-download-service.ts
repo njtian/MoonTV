@@ -1,10 +1,14 @@
+/* eslint-disable no-console */
 import { randomBytes } from 'crypto';
 import path from 'path';
 
+import { getAvailableApiSites } from './config';
+import { getDetailFromApi, searchFromApi } from './downstream';
 import { M3U8Downloader } from './m3u8-downloader';
 import { updateSourceHistory } from './source-history';
 import { getSourcePriority } from './source-priority';
 import { getVideoCacheService } from './video-cache';
+import { CachedSeries } from './video-cache.types';
 import {
   DownloadedItem,
   DownloadOptions,
@@ -13,6 +17,7 @@ import {
   DownloadTask,
   SourceSwitchRecord,
 } from './video-cache.types';
+import { generateSeriesKey } from './video-cache-key';
 import {
   atomicWriteFile,
   ensureDirectory,
@@ -247,10 +252,20 @@ export class VideoDownloadService {
    */
   private async downloadTask(task: DownloadTask): Promise<void> {
     const videoCacheService = getVideoCacheService();
-    const cachedSeries = await videoCacheService.getSeries(task.series_key);
+    let cachedSeries = await videoCacheService.getSeries(task.series_key);
 
+    // 如果缓存不存在，尝试重建缓存
     if (!cachedSeries) {
-      throw new Error('剧集缓存不存在');
+      console.log(
+        `[下载任务 ${task.task_id}] 缓存不存在，尝试重建缓存: ${task.series_key}`
+      );
+      cachedSeries = await this.rebuildCacheFromTask(task);
+      if (!cachedSeries) {
+        throw new Error('剧集缓存不存在且无法重建');
+      }
+      console.log(
+        `[下载任务 ${task.task_id}] 缓存重建成功: ${task.series_key}`
+      );
     }
 
     // 获取该集的所有可用源
@@ -463,6 +478,154 @@ export class VideoDownloadService {
         error: (error as Error).message,
         timeout: isTimeout,
       };
+    }
+  }
+
+  /**
+   * 从下载任务重建缓存
+   * 当缓存不存在时，通过搜索找到视频ID，然后复用 /api/detail 的逻辑重建缓存
+   */
+  private async rebuildCacheFromTask(
+    task: DownloadTask
+  ): Promise<CachedSeries | null> {
+    try {
+      // 1. 解析 series_key，提取豆瓣ID或标题+年份信息
+      let doubanId: number | undefined;
+      let title: string | undefined;
+      let year: string | undefined;
+
+      if (task.series_key.startsWith('douban_')) {
+        // 提取豆瓣ID
+        const doubanIdStr = task.series_key.replace('douban_', '');
+        doubanId = parseInt(doubanIdStr, 10);
+        if (isNaN(doubanId)) {
+          doubanId = undefined;
+        }
+      } else if (task.series_key.startsWith('title_')) {
+        // 提取标题和年份
+        const parts = task.series_key.replace('title_', '').split('_');
+        if (parts.length >= 2) {
+          year = parts[parts.length - 1];
+          title = parts.slice(0, -1).join('_');
+        }
+      }
+
+      // 如果没有提取到信息，使用任务中的title
+      if (!title) {
+        title = task.title;
+      }
+
+      if (!title) {
+        console.error(
+          `[下载任务 ${task.task_id}] 无法从 series_key 提取标题信息`
+        );
+        return null;
+      }
+
+      // 2. 获取 requested_source 的 API 配置
+      const apiSites = await getAvailableApiSites();
+      const apiSite = apiSites.find(
+        (site) => site.key === task.requested_source
+      );
+      if (!apiSite) {
+        console.error(
+          `[下载任务 ${task.task_id}] 无效的源: ${task.requested_source}`
+        );
+        return null;
+      }
+
+      // 3. 搜索匹配的剧集
+      console.log(
+        `[下载任务 ${task.task_id}] 在源 ${task.requested_source} 中搜索: ${title}`
+      );
+      const searchResults = await searchFromApi(apiSite, title);
+
+      if (searchResults.length === 0) {
+        console.error(`[下载任务 ${task.task_id}] 搜索未找到结果: ${title}`);
+        return null;
+      }
+
+      // 4. 从搜索结果中找到匹配的剧集
+      let matchedResult = null;
+
+      if (doubanId) {
+        // 优先匹配豆瓣ID
+        matchedResult = searchResults.find(
+          (result) => result.douban_id === doubanId
+        );
+        if (matchedResult) {
+          console.log(
+            `[下载任务 ${task.task_id}] 通过豆瓣ID匹配到剧集: ${matchedResult.title}`
+          );
+        }
+      }
+
+      if (!matchedResult && year) {
+        // 其次匹配标题和年份
+        matchedResult = searchResults.find((result) => {
+          const resultYear = result.year?.match(/\d{4}/)?.[0] || '';
+          return result.title === title && resultYear === year;
+        });
+        if (matchedResult) {
+          console.log(
+            `[下载任务 ${task.task_id}] 通过标题和年份匹配到剧集: ${matchedResult.title}`
+          );
+        }
+      }
+
+      if (!matchedResult) {
+        // 最后尝试只匹配标题（第一个结果）
+        matchedResult = searchResults.find((result) => result.title === title);
+        if (matchedResult) {
+          console.log(
+            `[下载任务 ${task.task_id}] 通过标题匹配到剧集: ${matchedResult.title}`
+          );
+        }
+      }
+
+      if (!matchedResult) {
+        console.error(
+          `[下载任务 ${task.task_id}] 未找到匹配的剧集，搜索结果数: ${searchResults.length}`
+        );
+        return null;
+      }
+
+      // 5. 获取详情并重建缓存（完全复用 /api/detail 的逻辑）
+      console.log(
+        `[下载任务 ${task.task_id}] 获取详情: source=${matchedResult.source}, id=${matchedResult.id}`
+      );
+      const detail = await getDetailFromApi(apiSite, matchedResult.id);
+
+      // 6. 验证生成的 series_key 是否匹配
+      const generatedSeriesKey = generateSeriesKey(detail);
+      if (generatedSeriesKey !== task.series_key) {
+        console.error(
+          `[下载任务 ${task.task_id}] series_key 不匹配: 期望 ${task.series_key}, 实际 ${generatedSeriesKey}`
+        );
+        return null;
+      }
+
+      // 7. 保存缓存（复用 setSeries 方法）
+      const videoCacheService = getVideoCacheService();
+      await videoCacheService.setSeries(task.series_key, detail);
+
+      // 8. 返回重建的缓存
+      const rebuiltCache = await videoCacheService.getSeries(task.series_key);
+      if (!rebuiltCache) {
+        console.error(`[下载任务 ${task.task_id}] 缓存重建后无法读取`);
+        return null;
+      }
+
+      console.log(
+        `[下载任务 ${task.task_id}] 缓存重建成功，包含 ${rebuiltCache.sources.length} 个源`
+      );
+      return rebuiltCache;
+    } catch (error) {
+      console.error(
+        `[下载任务 ${task.task_id}] 重建缓存失败:`,
+        error instanceof Error ? error.message : String(error)
+      );
+      return null;
     }
   }
 
